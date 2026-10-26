@@ -1,0 +1,26 @@
+# Core Qiskit
+qiskit==2.5.2
+qiskit-aer==0.17.2
+
+# Scientific computing
+numpy==2.5.2
+scipy==1.18.0
+
+# Parallelism
+joblib==1.5.3
+
+# Visualization
+matplotlib==3.11.1
+
+# Utilities
+tqdm==4.70.0
+psutil==7.2.2
+
+# Dados (portfólio)
+# Testado em 2026-10-26: qiskit 2.5.2 + qiskit-finance 0.4.1 + yfinance 1.7.0.
+# YahooDataProvider 0.4.1 espera "Adj Close"; yfinance >= 0.2.40 usa
+# auto_adjust=True por default. Use yf.download(..., auto_adjust=False)
+# ou o loader próprio em eaqga/portfolio.py.
+qiskit-finance==0.4.1
+yfinance>=0.2.40
+pandas

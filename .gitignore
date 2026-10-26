@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Ambientes
+.venv/
+venv/
+env/
+
+# Testes / lint / tipos
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dados e saídas
+data/cache/
+outputs/
+*.csv
+*.png
+*.gif
+*.pdf
+
+# Jupyter
+.ipynb_checkpoints/
