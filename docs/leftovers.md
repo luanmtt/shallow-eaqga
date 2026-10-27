@@ -165,16 +165,18 @@ A escolha do grupo foi **por geração**.
 ### 3.2 Nosso híbrido
 
 ```
-População = 2 elites (top-2 circuitos, copiados intactos)
-          + (N-2) filhos
-Filho = cópia do genoma 1Q de um pai
+Elite pool = top-2 pais (circuitos) por fitness médio.
+Próxima população = N filhos.
+Filho = cópia do genoma 1Q de um pai (A ou B)
       + nova floresta (P/N, p_s, cadeias)
       + mutação 1Q
 ```
 
-Isso é **EAQGA + elitismo explícito**, não EAQGA puro. O baseline não copia os
-circuitos dos pais; ele regenera todos os N a partir dos bitstrings. A cópia dos
-elites é uma escolha nossa e deve ser rotulada como tal.
+Os pais **não** são copiados intactos: o filho herda o genoma 1Q de um pai, mas
+recebe uma floresta nova e sofre mutação. O “elitismo” aqui é pressão seletiva
+(só dois reproduzem), não sobrevivência dos pais. Todos os N slots são filhos; o
+baseline também não copia os pais, ele regenera todos os N a partir dos dois
+bitstrings.
 
 ### 3.3 Bitstrings fixos × reamostrados
 
@@ -183,17 +185,18 @@ filhos usam os mesmos dois.
 
 Com `k = 50`, cada pai tem 50 bitstrings. Duas opções:
 
-- **Fixo por geração:** escolhe um representante por elite (melhor shot), e todos
+- **Fixo por geração:** escolhe um representante por pai (melhor shot), e todos
   os filhos usam esse par. É o análogo fiel ao baseline.
-- **Reamostrado por filho:** cada filho tira um shot novo do circuito elite; o
+- **Reamostrado por filho:** cada filho tira um shot novo do circuito pai; o
   par de bitstrings varia. Mais diversidade, mas não é o baseline.
 
 **Recomendação:** fixo por geração; reamostragem como ablation.
 
 ### 3.4 Em aberto
 
-- Confirmar se o pool é por geração (sim) e se os elites são copiados (sim).
-- Definir o tie-break quando os dois elites são idênticos.
+- Confirmar se o pool é por geração (sim) e se os pais são copiados (não: só o
+  genoma 1Q é herdado).
+- Definir o tie-break quando os dois pais são idênticos.
 
 ---
 
