@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from enum import Enum
 from numbers import Integral, Real
+from typing import Any
 
 __all__ = [
     "BackendKind",
@@ -228,7 +229,7 @@ class HybridConfig:
                 f"data deve ser Mapping, recebeu {type(data).__name__}."
             )
 
-        payload = dict(data)
+        payload: dict[str, Any] = dict(data)
         enum_fields = {
             "gate_set": GateSet,
             "forest_shape": ForestShape,
@@ -320,7 +321,7 @@ class BaselineConfig:
                 f"data deve ser Mapping, recebeu {type(data).__name__}."
             )
 
-        payload = dict(data)
+        payload: dict[str, Any] = dict(data)
         enum_fields = {
             "forest_shape": ForestShape,
             "backend": BackendKind,

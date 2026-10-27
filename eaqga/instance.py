@@ -339,12 +339,18 @@ class QUBOInstance:
                 f"data com campos desconhecidos: {sorted(extra)}."
             )
 
+        name = _require_non_empty_str("name", data["name"])
+        size = _require_int("S", data["S"], minimum=1)
+        Q = _as_square_matrix(data["Q"], "Q")
+        coupling = _as_square_matrix(data["coupling"], "coupling")
+        risk = _require_non_negative_float("q", data.get("q", 0.5))
+
         instance = cls(
-            name=data["name"],
-            S=data["S"],
-            Q=data["Q"],
-            coupling=data["coupling"],
-            q=data.get("q", 0.5),
+            name=name,
+            S=size,
+            Q=Q,
+            coupling=coupling,
+            q=risk,
         )
 
         if verbose:

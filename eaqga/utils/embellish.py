@@ -45,7 +45,10 @@ def sepComment(n: int, comment: str) -> str:
 
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     h = hex_color.lstrip("#")
-    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    red = int(h[0:2], 16)
+    green = int(h[2:4], 16)
+    blue = int(h[4:6], 16)
+    return red, green, blue
 
 
 def colorPrint(text: str, hex_color: str) -> str:
@@ -55,7 +58,7 @@ def colorPrint(text: str, hex_color: str) -> str:
     return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
 
 
-def stylePrint(text: str, hex_color: str = None, bold: bool = False, italic: bool = False, underline: bool = False) -> str:
+def stylePrint(text: str, hex_color: str | None = None, bold: bool = False, italic: bool = False, underline: bool = False) -> str:
     if not colors_enabled():
         return text
     codes = []
