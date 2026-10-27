@@ -346,6 +346,8 @@ pela posição no desenho.
 - Dados: `qiskit-finance==0.4.1` funciona com `qiskit==2.5.2`; `YahooDataProvider`
   precisa de `yfinance` com `auto_adjust=False`. `RandomDataProvider` funciona
   sem ajuste. Caminho preferido: `yfinance` direto + fórmulas de `μ`/`Σ`.
+- Avaliação: `EvaluationMode.SCALAR` é o default; `VECTORIZED` é opt-in via
+  `HybridConfig`/`BaselineConfig` e usa `QUBOInstance.fitness_many`.
 
 ---
 

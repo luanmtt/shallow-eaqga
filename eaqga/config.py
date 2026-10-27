@@ -21,6 +21,7 @@ from numbers import Integral, Real
 __all__ = [
     "BackendKind",
     "BaselineConfig",
+    "EvaluationMode",
     "ForestShape",
     "GateSet",
     "HybridConfig",
@@ -52,6 +53,19 @@ class BackendKind(str, Enum):
 
     STATEVECTOR = "statevector"
     MPS = "mps"
+
+
+class EvaluationMode(str, Enum):
+    """Como o fitness de um lote de bitstrings é calculado.
+
+    ``SCALAR`` é o caminho seguro: uma chamada a ``QUBOInstance.fitness`` por
+    estado único. ``VECTORIZED`` usa ``QUBOInstance.fitness_many`` com
+    ``einsum``; é mais rápido para lotes grandes, mas fica atrás de uma flag
+    para poder ser desligado em caso de divergência numérica.
+    """
+
+    SCALAR = "scalar"
+    VECTORIZED = "vectorized"
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -153,6 +167,7 @@ class HybridConfig:
     p_s: float = 0.6
     seed: int = 42
     backend: BackendKind = BackendKind.STATEVECTOR
+    evaluation_mode: EvaluationMode = EvaluationMode.SCALAR
     verbose: bool = True
 
     def __post_init__(self) -> None:
@@ -171,6 +186,7 @@ class HybridConfig:
 
         _require_enum("gate_set", self.gate_set, GateSet)
         _require_enum("backend", self.backend, BackendKind)
+        _require_enum("evaluation_mode", self.evaluation_mode, EvaluationMode)
         _require_bool("verbose", self.verbose)
         _require_probability("mutation_rate", self.mutation_rate)
         _require_probability("p_s", self.p_s)
@@ -217,6 +233,7 @@ class HybridConfig:
             "gate_set": GateSet,
             "forest_shape": ForestShape,
             "backend": BackendKind,
+            "evaluation_mode": EvaluationMode,
         }
         for key, enum_type in enum_fields.items():
             if key in payload and not isinstance(payload[key], enum_type):
@@ -249,6 +266,7 @@ class BaselineConfig:
     accumulated_pool: bool = False
     seed: int = 42
     backend: BackendKind = BackendKind.STATEVECTOR
+    evaluation_mode: EvaluationMode = EvaluationMode.SCALAR
     verbose: bool = True
 
     def __post_init__(self) -> None:
@@ -263,6 +281,7 @@ class BaselineConfig:
         _require_bool("accumulated_pool", self.accumulated_pool)
         _require_bool("verbose", self.verbose)
         _require_enum("backend", self.backend, BackendKind)
+        _require_enum("evaluation_mode", self.evaluation_mode, EvaluationMode)
         _require_forest_shape(self.forest_shape, self.max_degree)
 
     def to_dict(self, *, verbose: bool | None = None) -> dict[str, object]:
@@ -305,6 +324,7 @@ class BaselineConfig:
         enum_fields = {
             "forest_shape": ForestShape,
             "backend": BackendKind,
+            "evaluation_mode": EvaluationMode,
         }
         for key, enum_type in enum_fields.items():
             if key in payload and not isinstance(payload[key], enum_type):

@@ -184,6 +184,28 @@ class Evaluation:
             )
         return self.counts.get(bits, 0) / self.shots
 
+    def to_dict(self, *, verbose: bool = False) -> dict[str, object]:
+        """Resumo serializável para CSV/JSON.
+
+        Não inclui ``counts`` nem ``fitness_by_state`` para manter o CSV
+        estreito; esses campos continuam acessíveis no próprio ``Evaluation``.
+        """
+
+        data: dict[str, object] = {
+            "S": self.S,
+            "shots": self.shots,
+            "mean": self.mean,
+            "std": self.std,
+            "best_bitstring": self.best_bitstring,
+            "best_fitness": self.best_fitness,
+            "best_count": self.best_count,
+        }
+
+        if verbose:
+            print(f"[{type(self).__name__}] {data}")
+
+        return data
+
     @property
     def best_count(self) -> int:
         """Número de vezes que o melhor bitstring foi observado."""
@@ -203,6 +225,7 @@ def evaluate_counts(
     instance: QUBOInstance,
     *,
     reverse_bits: bool = True,
+    vectorized: bool = False,
 ) -> Evaluation:
     """Agrega ``counts`` do Qiskit em uma :class:`Evaluation`.
 
@@ -218,11 +241,16 @@ def evaluate_counts(
         do Qiskit (qubit de maior índice à esquerda) para o padrão do
         repositório (bit 0 = variável 0). Use ``False`` se as chaves já
         estiverem na ordem canônica.
+    vectorized:
+        Se ``True``, usa ``instance.fitness_many`` para avaliar todos os
+        estados únicos de uma vez. Default ``False`` (caminho escalar), para
+        manter o comportamento seguro e comparável.
 
     Raises
     ------
     TypeError
-        Se ``instance``, ``counts``, chaves ou contagens tiverem tipo errado.
+        Se ``instance``, ``counts``, chaves, contagens ou flags tiverem tipo
+        errado.
     ValueError
         Se alguma chave tiver tamanho/alfabeto inválido, se não houver
         shots positivos ou se a soma das contagens for zero.
@@ -241,6 +269,10 @@ def evaluate_counts(
     if not isinstance(reverse_bits, bool):
         raise TypeError(
             f"reverse_bits deve ser bool, recebeu {type(reverse_bits).__name__}."
+        )
+    if not isinstance(vectorized, bool):
+        raise TypeError(
+            f"vectorized deve ser bool, recebeu {type(vectorized).__name__}."
         )
 
     canonical: dict[str, int] = {}
@@ -285,9 +317,17 @@ def evaluate_counts(
     if total <= 0:
         raise ValueError("a soma das contagens deve ser positiva.")
 
-    fitness_by_state = {
-        bits: instance.fitness(bits) for bits in canonical
-    }
+    states = tuple(canonical)
+
+    if vectorized:
+        values = instance.fitness_many(states, vectorized=True)
+        fitness_by_state = dict(
+            zip(states, values.tolist(), strict=True)
+        )
+    else:
+        fitness_by_state = {
+            bits: instance.fitness(bits) for bits in states
+        }
 
     mean = (
         sum(
@@ -339,11 +379,14 @@ def evaluate_counts(
 def evaluate_bitstrings(
     bitstrings: Iterable[str],
     instance: QUBOInstance,
+    *,
+    vectorized: bool = False,
 ) -> Evaluation:
     """Agrega uma sequência de bitstrings já na ordem canônica.
 
     Útil para testes e para quando o chamador já tem as amostras, sem passar
-    pelos ``counts`` do Qiskit.
+    pelos ``counts`` do Qiskit. ``vectorized`` é repassado para
+    :func:`evaluate_counts`.
     """
 
     if not isinstance(instance, QUBOInstance):
@@ -366,4 +409,9 @@ def evaluate_bitstrings(
         raise ValueError("bitstrings não pode ser vazio.")
 
     counts = Counter(samples)
-    return evaluate_counts(counts, instance, reverse_bits=False)
+    return evaluate_counts(
+        counts,
+        instance,
+        reverse_bits=False,
+        vectorized=vectorized,
+    )
