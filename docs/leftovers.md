@@ -6,6 +6,8 @@ separado. Não é implementação; é memória de decisão.
 
 Ordem de leitura sugerida: `01` (baseline), `02` (plano), `03` (diff), este.
 
+**Legenda:** `[x]` decidido ou concluído; `[ ]` aberto.
+
 ---
 
 ## 1. Agendamento de CNOTs
@@ -51,20 +53,20 @@ coloring). Matching: `Δ=1`; caminho: `Δ=2`; estrela com `m` folhas: `Δ=m`.
 6. **Aceitar a estrela** — se o grau máximo for 3–4, a profundidade é
    aceitável; se for `S-1`, o circuito deixa de ser raso.
 
-### 1.4 Recomendação
+### 1.4 Decisão
 
-`d_max = 2` (coleção de caminhos) + greedy packing. Profundidade ≤ 2 camadas de
-CNOT. A estrela do paper vira caminho; nem todos os pares ficam diretamente
-conectados, mas a correlação de ponta a ponta é preservada pela paridade.
+- [x] **Híbrido:** `PATH` com `max_degree=2`. É a coleção de caminhos; cada
+  qubit toca no máximo 2 CNOTs e o agendamento cabe em até 2 camadas.
+- [x] **Baseline:** `STAR` com `max_degree=None`, fiel ao paper (“um controle,
+  os outros alvos”).
+- [ ] **Orçamento de profundidade:** `num_columns` conta apenas as colunas 1Q;
+  as camadas de CNOT são acrescentadas depois. Se quisermos uma profundidade
+  total fixa, o limite ainda precisa ser decidido no runner.
 
-Se a estrela exata for necessária, limitar o fan-out a 3–4 e usar múltiplos
-centros. A profundidade fica ≤ 4.
+### 1.5 Em uma frase
 
-### 1.5 Em aberto
-
-- Aceitar caminho no lugar da estrela?
-- Qual `d_max`: 2 (mais raso) ou 3–4 (mais fiel à estrela)?
-- O `num_portas` do genoma precisa reservar quantas camadas para CNOTs?
+`PATH` é uma **corrente** (`0—1—2—3`); `STAR` é um **guarda-chuva** (um centro
+controlando várias folhas); `BOUNDED` é o caso geral com grau máximo.
 
 ---
 
@@ -334,39 +336,44 @@ pela posição no desenho.
 
 ## 10. Já decidido (não reabrir sem motivo)
 
-- Leitura **A**: a floresta é reconstruída; o genoma 1Q é herdado.
-- `S = n`, portfólio QUBO.
-- Top-2 **por geração**, por fitness médio.
-- `k = 50`.
-- Melhor shot **por elite** (não os 2 melhores shots globais).
-- Mutação por **substituição** de 1Q; CNOTs intocados.
-- Camada `H` inicial fixa.
-- CNOT é a única porta multi-qubit.
-- AQGA **não** será implementado; números do paper como referência.
-- Dados: `qiskit-finance==0.4.1` funciona com `qiskit==2.5.2`; `YahooDataProvider`
+- [x] Leitura **A**: a floresta é reconstruída; o genoma 1Q é herdado.
+- [x] `S = n`, portfólio QUBO.
+- [x] Top-2 **por geração**, por fitness médio.
+- [x] `k = 50`.
+- [x] Melhor shot **por elite** (não os 2 melhores shots globais).
+- [x] Mutação por **substituição** de 1Q; CNOTs intocados.
+- [x] Camada `H` inicial fixa.
+- [x] CNOT é a única porta multi-qubit.
+- [x] AQGA **não** será implementado; números do paper como referência.
+- [x] Dados: `qiskit-finance==0.4.1` funciona com `qiskit==2.5.2`; `YahooDataProvider`
   precisa de `yfinance` com `auto_adjust=False`. `RandomDataProvider` funciona
   sem ajuste. Caminho preferido: `yfinance` direto + fórmulas de `μ`/`Σ`.
-- Avaliação: `EvaluationMode.SCALAR` é o default; `VECTORIZED` é opt-in via
+- [x] Avaliação: `EvaluationMode.SCALAR` é o default; `VECTORIZED` é opt-in via
   `HybridConfig`/`BaselineConfig` e usa `QUBOInstance.fitness_many`.
+- [x] **Forma da floresta:** híbrido usa `PATH` com `max_degree=2`; baseline usa
+  `STAR` com `max_degree=None`.
 
 ---
 
 ## 11. Decisões abertas
 
-1. **Forma da floresta:** caminho (`d_max = 2`) ou estrela com fan-out limitado?
-2. **Bias:** determinístico `X/I`, clássico 0.95, `H T H`, `RY` ou sem bias?
-3. **Bitstrings fixos ou reamostrados por filho?** (recomendação: fixos)
-4. **Métrica primária de exploração:** entropia, unicidade ou Hamming?
-5. **`k` e two-stage:** manter 50 ou refinar o top-2 com mais shots?
-6. **Prioridade da ablação:** sem CNOT + Clifford vs Hilbert + bias RY é o
+1. [x] **Forma da floresta:** `PATH` (`d_max=2`) no híbrido; `STAR` no baseline.
+2. [ ] **Bias do híbrido:** determinístico `X/I`, clássico 0.95, `H T H`, `RY`
+   ou genoma 1Q herdado como bias?
+3. [ ] **Bitstrings fixos ou reamostrados por filho?** (recomendação: fixos)
+4. [ ] **Métrica primária de exploração:** entropia, unicidade ou Hamming?
+5. [ ] **Two-stage:** manter `k=50` ou refinar o top-2 com mais shots?
+6. [ ] **Prioridade da ablação:** sem CNOT + Clifford vs Hilbert + bias RY é o
    mínimo; “mais/menos 1Q” só se a contagem variar.
 
 ---
 
 ## 12. Próximos passos
 
-1. Fechar forma da floresta e bias (itens 1–2).
-2. Escrever o spec de genótipo/fenótipo (o que é herdado, gerado e mutado).
-3. Implementar o EAQGA fiel (P0) e validar contra as Tabelas I/II.
-4. Implementar o híbrido (P2–P4) com a ablação mínima.
-5. Escolher a métrica de exploração e rodar a estatística.
+- [x] Forma da floresta: `PATH` com `d_max=2` no híbrido; `STAR` no baseline.
+- [ ] Fechar o bias do híbrido.
+- [ ] Escrever o spec de genótipo/fenótipo (o que é herdado, gerado e mutado).
+- [x] Implementar o baseline EAQGA (dummy).
+- [ ] Validar o baseline contra as Tabelas I/II.
+- [ ] Implementar o híbrido (P2–P4) com a ablação mínima.
+- [ ] Escolher a métrica de exploração e rodar a estatística.
