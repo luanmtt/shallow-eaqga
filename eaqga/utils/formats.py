@@ -23,6 +23,31 @@ def formatMantissa(value: float, decimals: int = 1) -> str:
     return f"{mantissa:.{decimals}f} × 10^{exponent}"
 
 
+def formatValue(
+    value: float,
+    decimals: int = 2,
+    *,
+    simple_limit: float = 100.0,
+) -> str:
+    """Formata valores simples com casas fixas e grandes em mantissa.
+
+    Para ``abs(value) <= simple_limit``, usa ``f"{value:.{decimals}f}"``.
+    Acima disso, delega para :func:`formatMantissa`.
+
+    Valores muito pequenos (por exemplo ``0.001``) aparecem como ``0.00``
+    com duas casas. Para precisão científica nesses casos, use
+    :func:`formatMantissa` diretamente.
+    """
+
+    if not math.isfinite(value):
+        return str(value)
+
+    if abs(value) <= simple_limit:
+        return f"{value:.{decimals}f}"
+
+    return formatMantissa(value)
+
+
 def formatLargeNumber(value: int | float, decimals: int = 1) -> str:
 
     '''
