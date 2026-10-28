@@ -26,11 +26,27 @@ if str(_ROOT) not in sys.path:
 
 import numpy as np
 
-from eaqga.config import BaselineConfig, EvaluationMode, HybridConfig
+from eaqga.config import (
+    BaselineConfig,
+    EvaluationMode,
+    ForestShape,
+    HybridConfig,
+)
+from eaqga.crossover import (
+    CorrelationKind,
+    Pair,
+    build_crossover_forest,
+    correlation_pairs,
+    decay_factor,
+    forest_metrics,
+    make_forest,
+    orient_forest,
+    pair_probability,
+)
 from eaqga.fitness import evaluate_counts
 from eaqga.instance import QUBOInstance, synthetic_qubo
 from eaqga.utils.embellish import sepComment, stylePrint
-from eaqga.utils.formats import formatMantissa
+from eaqga.utils.formats import formatValue
 
 C = "#f5c2e7"
 PASS_COLOR = "#3a5716"
@@ -266,7 +282,140 @@ def check_brute_force() -> str:
         "brute_force devolveu fitness inconsistente",
     )
 
-    return f"best={best_bits} fitness={formatMantissa(best_value)}"
+    return f"best={best_bits} fitness={formatValue(best_value)}"
+
+
+def check_crossover_pairs() -> None:
+    pairs = correlation_pairs("00110", "01011")
+    got = {(pair.i, pair.j, pair.kind) for pair in pairs}
+
+    expected = {
+        (0, 3, CorrelationKind.NEGATIVE),
+        (1, 2, CorrelationKind.NEGATIVE),
+        (1, 4, CorrelationKind.POSITIVE),
+        (2, 4, CorrelationKind.NEGATIVE),
+    }
+
+    _check(got == expected, f"pares P/N inesperados: {got}")
+
+
+def check_crossover_probability() -> None:
+    _check(
+        math.isclose(decay_factor(1, 10), 0.55, rel_tol=0.0, abs_tol=1e-12),
+        "df(1, 10) != 0.55",
+    )
+
+    cases = (
+        (CorrelationKind.POSITIVE, 0.5, 0.165),
+        (CorrelationKind.POSITIVE, -0.5, 0.300),
+        (CorrelationKind.NEGATIVE, -0.5, 0.300),
+        (CorrelationKind.NEGATIVE, 0.5, 0.165),
+    )
+
+    for kind, coupling, expected in cases:
+        got = pair_probability(kind, coupling, 1, 10, 0.6)
+        _check(
+            math.isclose(got, expected, rel_tol=0.0, abs_tol=1e-12),
+            f"p_s({kind.value}, {coupling})={got} != {expected}",
+        )
+
+
+def check_crossover_forest() -> None:
+    path_pairs = (
+        Pair(0, 1, CorrelationKind.POSITIVE),
+        Pair(1, 2, CorrelationKind.NEGATIVE),
+        Pair(2, 3, CorrelationKind.POSITIVE),
+    )
+
+    path_edges = orient_forest(path_pairs, 4, ForestShape.PATH)
+    path_forest = make_forest(path_edges, path_pairs)
+    path_metrics = forest_metrics(path_forest)
+
+    _check(path_metrics.edges == 3, "path: edges != 3")
+    _check(path_metrics.layers == 2, "path: layers != 2")
+    _check(path_metrics.chains == 1, "path: chains != 1")
+    _check(path_metrics.max_chain_length == 4, "path: max_chain_length != 4")
+    _check(path_metrics.max_degree == 2, "path: max_degree != 2")
+    _check(path_metrics.positive_edges == 2, "path: positive_edges != 2")
+    _check(path_metrics.negative_edges == 1, "path: negative_edges != 1")
+
+    star_edges = orient_forest(path_pairs, 4, ForestShape.STAR)
+    star_forest = make_forest(star_edges, path_pairs)
+    star_metrics = forest_metrics(star_forest)
+
+    _check(star_metrics.layers == 3, "star: layers != 3")
+    _check(star_metrics.max_degree == 3, "star: max_degree != 3")
+
+    empty_metrics = forest_metrics(make_forest(()))
+    _check(empty_metrics.edges == 0, "empty: edges != 0")
+    _check(empty_metrics.chains == 0, "empty: chains != 0")
+
+    coupling = np.full((4, 4), 0.5)
+    np.fill_diagonal(coupling, 0.0)
+    full_forest = build_crossover_forest(
+        "0011",
+        "0101",
+        coupling,
+        t=10,
+        t_max=10,
+        p_s=1.0,
+        shape=ForestShape.PATH,
+        max_degree=2,
+    )
+    full_metrics = forest_metrics(full_forest)
+
+    _check(full_metrics.edges <= 3, "full: edges > S - 1")
+    _check(
+        full_metrics.selected_pairs == len(full_forest.selected_pairs),
+        "full: selected_pairs inconsistente",
+    )
+
+
+def check_crossover_guards() -> None:
+    cycle = (
+        Pair(0, 1, CorrelationKind.POSITIVE),
+        Pair(1, 2, CorrelationKind.POSITIVE),
+        Pair(0, 2, CorrelationKind.POSITIVE),
+    )
+
+    _expect(
+        ValueError,
+        lambda: orient_forest(cycle, 3, ForestShape.PATH),
+        "ciclo em orient_forest",
+    )
+    _expect(
+        ValueError,
+        lambda: correlation_pairs("0a", "01"),
+        "bit inválido",
+    )
+    _expect(
+        ValueError,
+        lambda: build_crossover_forest(
+            "01",
+            "01",
+            np.zeros((2, 2)),
+            1,
+            1,
+            0.5,
+            shape=ForestShape.PATH,
+            max_degree=3,
+        ),
+        "PATH com max_degree != 2",
+    )
+    _expect(
+        ValueError,
+        lambda: build_crossover_forest(
+            "01",
+            "01",
+            np.zeros((2, 2)),
+            1,
+            1,
+            0.5,
+            shape=ForestShape.STAR,
+            max_degree=2,
+        ),
+        "STAR com max_degree != None",
+    )
 
 
 CHECKS: list[tuple[str, Check]] = [
@@ -280,6 +429,10 @@ CHECKS: list[tuple[str, Check]] = [
     ("fitness.counts", check_fitness_counts),
     ("fitness.vectorized", check_fitness_vectorized),
     ("instance.brute_force", check_brute_force),
+    ("crossover.pairs", check_crossover_pairs),
+    ("crossover.probability", check_crossover_probability),
+    ("crossover.forest", check_crossover_forest),
+    ("crossover.guards", check_crossover_guards),
 ]
 
 
