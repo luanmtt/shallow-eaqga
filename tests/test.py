@@ -1,19 +1,19 @@
 """Smoke test do pipeline do EAQGA com um dataset dummy.
 
-Este arquivo **não** substitui o circuito quântico. Ele é um surrogate
-clássico de bitstrings para validar o encanamento:
+O baseline usa o runner real em ``eaqga.baseline`` (Qiskit/Aer). O "ours"
+ainda é um surrogate clássico de bitstrings, porque ``individuo.py`` e
+``runner.py`` reais ainda não existem. O objetivo é comparar o encanamento:
 
-    dataset dummy → fitness QUBO → seleção top-2 → crossover → mutação → métricas
+    dataset dummy → fitness QUBO → top-2 → crossover → mutação → métricas
 
-O baseline usa crossover uniforme; o "ours" usa uma versão bit-a-bit da ideia
-de entrelaçamento (pares P/N dos dois pais). Quando `crossover.py`,
-`individuo.py` e `runner.py` estiverem prontos, este teste pode ser trocado
-para chamar os módulos reais.
+O baseline é fiel ao paper: ``H^S → RY → CNOTs → medida``, um shot por
+circuito, top-2 da geração. O "ours" usa uma versão bit-a-bit da ideia de
+entrelaçamento (pares P/N dos dois pais) e serve só como placeholder.
 
 Uso:
-    python tests/test.py
-    python tests/test.py --baseline
-    python tests/test.py --ours
+    python tests/test.py              # baseline real + ours surrogate
+    python tests/test.py --baseline   # só baseline real (precisa de Qiskit)
+    python tests/test.py --ours       # só ours surrogate
 """
 
 from __future__ import annotations
@@ -31,9 +31,15 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from eaqga.config import (
+    BackendKind,
+    BaselineConfig,
+    EvaluationMode,
+    ForestShape,
+)
 from eaqga.instance import QUBOInstance, synthetic_qubo
 from eaqga.utils.embellish import sepComment, stylePrint
-from eaqga.utils.formats import formatMantissa
+from eaqga.utils.formats import formatValue
 
 C = "#f5c2e7"
 PASS_COLOR = "#3a5716"
@@ -42,6 +48,7 @@ FAIL_COLOR = "#ff6b6b"
 POPULATION_SIZE = 5
 GENERATIONS = 5
 MUTATION_RATE = 0.10
+P_A = 0.95
 P_S = 0.60
 PARENT_BIAS = 0.75
 SEED = 42
@@ -66,6 +73,7 @@ class RunResult:
     final_std: float
     evaluations: int
     elapsed_s: float
+    best_generation: int | None = None
 
     def gap_to(self, optimum: float) -> float:
         return optimum - self.best
@@ -151,64 +159,65 @@ def _mean_std(population: list[Individual]) -> tuple[float, float]:
     return mean, std
 
 
-def run_baseline(
-    instance: QUBOInstance,
-    *,
-    seed: int = SEED,
-    population_size: int = POPULATION_SIZE,
-    generations: int = GENERATIONS,
-    mutation_rate: float = MUTATION_RATE,
-) -> RunResult:
-    """Surrogate do baseline: crossover uniforme + mutação."""
+def run_baseline_real(instance: QUBOInstance) -> RunResult:
+    """Roda o baseline real (Qiskit/Aer) e adapta para a tabela do teste."""
 
-    rng = random.Random(seed)
-    population = _evaluate_population(
-        [_random_bits(rng, instance.S) for _ in range(population_size)],
-        instance,
+    try:
+        from eaqga.baseline import run_baseline as run_baseline_qiskit
+    except ImportError as exc:
+        print(
+            stylePrint(
+                "Qiskit/Aer indisponível para --baseline. "
+                "Instale requirements.txt ou use --ours.",
+                FAIL_COLOR,
+                bold=True,
+            )
+        )
+        raise SystemExit(2) from exc
+
+    config = BaselineConfig(
+        population_size=POPULATION_SIZE,
+        generations=GENERATIONS,
+        shots=1,
+        p_a=P_A,
+        p_s=P_S,
+        forest_shape=ForestShape.STAR,
+        max_degree=None,
+        accumulated_pool=False,
+        seed=SEED,
+        backend=BackendKind.STATEVECTOR,
+        evaluation_mode=EvaluationMode.SCALAR,
+        verbose=False,
     )
 
-    initial_best = max(ind.fitness for ind in population)
-    best = max(population, key=lambda ind: ind.fitness)
-    evaluations = population_size
-    start = time.perf_counter()
+    result = run_baseline_qiskit(instance, config)
 
-    for _ in range(generations):
-        parents = _select_elites(population)
-        children: list[str] = []
-
-        for _ in range(population_size):
-            first = rng.choice(parents)
-            second = rng.choice(parents)
-
-            bits = "".join(
-                first.bits[i] if rng.random() < 0.5 else second.bits[i]
-                for i in range(instance.S)
-            )
-            children.append(_mutate(bits, rng, mutation_rate))
-
-        population = _evaluate_population(children, instance)
-        evaluations += population_size
-
-        current = max(population, key=lambda ind: ind.fitness)
-        if current.fitness > best.fitness:
-            best = current
-
-    final_mean, final_std = _mean_std(population)
-    elapsed = time.perf_counter() - start
+    final_values = [ind.fitness for ind in result.final_population]
+    initial_value = result.history["best"][0]
+    if isinstance(initial_value, bool) or not isinstance(initial_value, (int, float)):
+        raise TypeError(
+            "history['best'][0] deveria ser numérico, recebeu "
+            f"{type(initial_value).__name__}."
+        )
 
     return RunResult(
         name="baseline",
-        initial_best=initial_best,
-        best=best.fitness,
-        best_bits=best.bits,
-        final_mean=final_mean,
-        final_std=final_std,
-        evaluations=evaluations,
-        elapsed_s=elapsed,
+        initial_best=float(initial_value),
+        best=result.best_fitness,
+        best_bits=result.best_bits,
+        final_mean=statistics.fmean(final_values),
+        final_std=(
+            statistics.stdev(final_values)
+            if len(final_values) > 1
+            else 0.0
+        ),
+        evaluations=result.evaluations,
+        elapsed_s=result.elapsed_s,
+        best_generation=result.best_generation,
     )
 
 
-def run_ours(
+def run_ours_surrogate(
     instance: QUBOInstance,
     *,
     seed: int = SEED,
@@ -217,7 +226,7 @@ def run_ours(
     mutation_rate: float = MUTATION_RATE,
     p_s: float = P_S,
 ) -> RunResult:
-    """Surrogate do nosso crossover: copia um pai, muta e reforça P/N."""
+    """Surrogate do nosso crossover: copia um pai, reforça P/N e muta."""
 
     rng = random.Random(seed)
     population = _evaluate_population(
@@ -227,10 +236,11 @@ def run_ours(
 
     initial_best = max(ind.fitness for ind in population)
     best = max(population, key=lambda ind: ind.fitness)
+    best_generation = 0
     evaluations = population_size
     start = time.perf_counter()
 
-    for _ in range(generations):
+    for generation in range(1, generations + 1):
         parents = _select_elites(population)
         pairs = _correlation_pairs(parents[0].bits, parents[1].bits)
         children: list[str] = []
@@ -252,12 +262,13 @@ def run_ours(
         current = max(population, key=lambda ind: ind.fitness)
         if current.fitness > best.fitness:
             best = current
+            best_generation = generation
 
     final_mean, final_std = _mean_std(population)
     elapsed = time.perf_counter() - start
 
     return RunResult(
-        name="ours",
+        name="ours (sur.)",
         initial_best=initial_best,
         best=best.fitness,
         best_bits=best.bits,
@@ -265,6 +276,7 @@ def run_ours(
         final_std=final_std,
         evaluations=evaluations,
         elapsed_s=elapsed,
+        best_generation=best_generation,
     )
 
 
@@ -309,16 +321,29 @@ def _print_header(
     instance: QUBOInstance,
     brute_bits: str,
     brute_value: float,
+    *,
+    do_baseline: bool,
+    do_ours: bool,
 ) -> None:
     print(sepComment(40, stylePrint("EAQGA smoke test", C, bold=True)))
     print(f"  {stylePrint('• instância', C)}: {instance.name} (S={instance.S})")
     print(f"  {stylePrint('• população', C)}: {POPULATION_SIZE}")
     print(f"  {stylePrint('• gerações', C)}: {GENERATIONS}")
     print(f"  {stylePrint('• seed', C)}: {SEED}")
+    print(f"  {stylePrint('• p_a', C)}: {P_A}   {stylePrint('p_s', C)}: {P_S}")
     print(
         f"  {stylePrint('• brute force', C)}: {brute_bits} "
-        f"fitness={formatMantissa(brute_value)}"
+        f"fitness={formatValue(brute_value)}"
     )
+    if do_baseline:
+        print(f"  {stylePrint('• baseline', C)}: Qiskit EAQGA (real)")
+    if do_ours:
+        print(f"  {stylePrint('• ours', C)}: surrogate clássico")
+    if do_baseline and do_ours:
+        print(
+            f"  {stylePrint('• nota', C)}: baseline real × ours surrogate "
+            "(comparação não é apples-to-apples)"
+        )
     print()
 
 
@@ -331,19 +356,25 @@ def _print_results(
 
     header = (
         f"{'algoritmo':<12} {'best':>16} {'gap':>16} "
-        f"{'mean final':>16} {'std':>16} {'evals':>6} {'ótimo':>6}"
+        f"{'mean final':>16} {'std':>16} {'evals':>6} {'gen':>5} {'ótimo':>6}"
     )
     print(f"  {stylePrint(header, C, bold=True)}")
 
     for result in results:
         found = "sim" if result.found_optimum(brute_value) else "não"
+        generation = (
+            "-"
+            if result.best_generation is None
+            else str(result.best_generation)
+        )
         print(
             f"  {result.name:<12} "
-            f"{formatMantissa(result.best):>16} "
-            f"{formatMantissa(result.gap_to(brute_value)):>16} "
-            f"{formatMantissa(result.final_mean):>16} "
-            f"{formatMantissa(result.final_std):>16} "
+            f"{formatValue(result.best):>16} "
+            f"{formatValue(result.gap_to(brute_value)):>16} "
+            f"{formatValue(result.final_mean):>16} "
+            f"{formatValue(result.final_std):>16} "
             f"{result.evaluations:>6} "
+            f"{generation:>5} "
             f"{found:>6}"
         )
 
@@ -354,11 +385,15 @@ def _print_results(
         print()
         print(
             f"  {stylePrint('ours - baseline (best)', C)}: "
-            f"{formatMantissa(delta_best)}"
+            f"{formatValue(delta_best)}"
         )
         print(
             f"  {stylePrint('redução de gap (ours)', C)}: "
-            f"{formatMantissa(delta_gap)}"
+            f"{formatValue(delta_gap)}"
+        )
+        print(
+            f"  {stylePrint('nota', C)}: ours é surrogate; "
+            "baseline é Qiskit EAQGA."
         )
 
     print(
@@ -406,12 +441,12 @@ def main() -> int:
     parser.add_argument(
         "--baseline",
         action="store_true",
-        help="roda apenas o surrogate do baseline.",
+        help="roda o baseline real (Qiskit) e compara.",
     )
     parser.add_argument(
         "--ours",
         action="store_true",
-        help="roda apenas o surrogate do nosso crossover.",
+        help="roda o surrogate do nosso crossover.",
     )
     args = parser.parse_args()
 
@@ -422,15 +457,21 @@ def main() -> int:
     instance = synthetic_qubo(S=DUMMY_S, seed=DUMMY_SEED)
     brute_bits, brute_value = instance.brute_force()
 
-    _print_header(instance, brute_bits, brute_value)
+    _print_header(
+        instance,
+        brute_bits,
+        brute_value,
+        do_baseline=do_baseline,
+        do_ours=do_ours,
+    )
 
     results: list[RunResult] = []
 
     if do_baseline:
-        results.append(run_baseline(instance))
+        results.append(run_baseline_real(instance))
 
     if do_ours:
-        results.append(run_ours(instance))
+        results.append(run_ours_surrogate(instance))
 
     _print_results(results, instance, brute_value)
     return _check_all(results, instance, brute_value)
