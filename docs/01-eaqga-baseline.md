@@ -257,6 +257,79 @@ bit do controle.
 44 Retorna x^{b1}
 ```
 
+### 8.5 O `H` é só da população inicial
+
+O Algorithm 1 (linhas 2-8) cria `QC^0 = |0>^S` e aplica `H` em cada qubit **uma
+vez**, ao criar os `N` circuitos iniciais. A partir da linha 16, cada geração
+reinicia `QC0 = |0>^n` e faz `QC^p ← QC0` — **sem `H`**. Logo:
+
+| geração | circuito | medida |
+|---|---|---|
+| 0 | `H^S → medida` | uniforme, ~50/50 por bit |
+| 1..`T_max` | `RY/X/CX` a partir de `|0>^S` | enviesada por `p_a` |
+
+A camada `H` por geração **não existe no paper**. Ela também é o que tornava os
+CNOTs inertes: `H` em todos os qubits deixa todo controle em `|+>`, e
+`CNOT|+>|+> = |+>|+>` não altera marginal em `Z`. Sem `H`, o CNOT copia (ou
+inverte) de fato o bit do controle.
+
+### 8.6 O `X` no alvo não é erro de sinal
+
+O `X` muda de base antes do `CNOT`. Com o alvo em `|0>`:
+
+```
+P:  RY(θ) no controle,                 CX(c, t)  →  t = c
+N:  RY(θ) no controle, X no alvo,      CX(c, t)  →  t = ¬c
+```
+
+`X` + `CNOT` = `t = ¬c`, que é a definição do estado `|ψ^n> = α|01> + β|10>` da
+Fig. 3(b). O sinal da correlação está na **paridade** (`P`/`N`), não numa fase
+global; por isso o `X` não é um “sinal trocado”.
+
+O pseudocódigo, porém, condiciona o `X` ao **valor do bit** (`if xb1[n1] == 1:
+X(n2)`) em vez do **tipo do par**. As duas regras coincidem quando o bit do pai
+no alvo é 0 e divergem quando é 1. Medido com Aer (`p_a=0.95`, 20k shots,
+estado final do par `(n1, n2)`):
+
+| pais | par | regra por tipo | pseudocódigo literal |
+|---|---|---|---|
+| `1,1` | `P` | `11` (0.950) | `10` (0.950) |
+| `1,0` | `N` | `10` (0.950) | `10` (0.950) |
+| `0,0` | `P` | `00` (0.950) | `00` (0.950) |
+| `0,1` | `N` | `01` (0.950) | `00` (0.950) |
+
+Ou seja: a regra literal **inverte o alvo sempre que o bit do pai no alvo é 1**.
+O baseline usa a regra por tipo (conserva a correlação observada) e deixa a
+literal em `BaselineConfig.paper_x_rule=True`, como reprodução/ablação.
+
+### 8.7 Ordem e repetição das rotações
+
+O `RY` do controle é aplicado **dentro do laço de pares**, na ordem de
+`SelectedEntangledQubits`. Nós aplicamos uma vez por controle, antes do primeiro
+`CX` que ele controla. Repetir a mesma rotação k vezes daria `RY(k·θ)`: com
+`p_a=0.95`, `k=4` levaria `P(1)` de 0.95 para ≈0.63. A escolha está documentada
+em `build_baseline_circuit`; não há flag porque repetir não é defensável.
+
+Consequência prática da topologia, com o baseline fiel (cadeia completa,
+`p_a=0.95`, profundidade transpilada para `statevector`):
+
+| forma | bits com `RY` próprio | `RY` | `CX` | profundidade `S=6` | `S=20` |
+|---|---|---:|---:|---:|---:|
+| `PATH` | ~1 por aresta | 4 | 5 | 10 | 38 |
+| `STAR` | 1 (o hub); alvos só copiam | 1 | 5 | 7 | 21 |
+
+O `PATH` tem mais bits “livres” (mais exploração), mas paga em profundidade:
+cada controle precisa do seu `RY` **antes** do `CX` que ele controla, então não
+dá para empacotar todos os CNOTs em 2 camadas. O `STAR` concentra tudo no hub e
+é mais raso, mas a população inteira depende de **um** bit enviesado — é por
+isso que as Tabelas I/II do paper têm `std` tão pequeno (0.007-0.024) comparado
+ao GA (0.06-0.12): a população colapsa no melhor pai.
+
+Se aplicássemos todos os `RY` antes de todos os `CNOT`, o `PATH` voltaria a ter
+2 camadas de CNOT — mas cada `RY` de um nó que também é alvo seria sobrescrito
+pelo `CNOT` de entrada, e sobraria **1 bit enviesado por cadeia**, como no
+`STAR`. Explorar mais e ser raso são objetivos em conflito nesse circuito.
+
 ## 9. Resultados relatados e protocolo de reporting
 
 ### 9.1 Simulador
