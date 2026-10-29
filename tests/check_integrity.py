@@ -19,6 +19,7 @@ import sys
 import traceback
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -95,6 +96,49 @@ def check_config_defaults() -> None:
         "avaliação default deve ser SCALAR",
     )
     _check(baseline.shots == 1, "baseline default deve ter 1 shot")
+
+
+def check_baseline_circuit() -> str | None:
+    try:
+        from eaqga.baseline import build_baseline_circuit, build_uniform_circuit
+    except ImportError:
+        return "skipped (sem qiskit)"
+
+    def ops(circuit: object, name: str) -> int:
+        data = getattr(circuit, "data")
+        return sum(1 for item in data if getattr(item, "operation").name == name)
+
+    uniform = build_uniform_circuit(3)
+    _check(ops(uniform, "h") == 3, "população inicial: H != 3")
+    _check(ops(uniform, "ry") == 0, "população inicial: RY inesperado")
+
+    pairs = (
+        Pair(0, 1, CorrelationKind.POSITIVE),
+        Pair(1, 2, CorrelationKind.NEGATIVE),
+        Pair(2, 3, CorrelationKind.POSITIVE),
+    )
+    forest = make_forest(orient_forest(pairs, 4, ForestShape.PATH), pairs)
+    circuit = build_baseline_circuit("1010", forest, 0.95)
+
+    _check(ops(circuit, "h") == 0, "crossover não pode ter H")
+    _check(ops(circuit, "cx") == 3, "crossover: CX != 3")
+    _check(ops(circuit, "ry") == 2, "crossover: RY != controles distintos")
+    _check(ops(circuit, "x") == 1, "crossover: X deve seguir o par N")
+
+    typed = build_baseline_circuit("1111", forest, 0.95)
+    literal = build_baseline_circuit("1111", forest, 0.95, paper_x_rule=True)
+    _check(ops(typed, "x") == 1, "regra por tipo: só o par N inverte")
+    _check(ops(literal, "x") == 3, "paper_x_rule: X em todo par com bit 1")
+
+    _expect(
+        TypeError,
+        lambda: build_baseline_circuit(
+            "1010", forest, 0.95, paper_x_rule=cast(bool, 1)
+        ),
+        "paper_x_rule não bool",
+    )
+
+    return "H só na inicialização; X por tipo de par"
 
 
 def check_config_guards() -> None:
@@ -433,6 +477,7 @@ CHECKS: list[tuple[str, Check]] = [
     ("crossover.probability", check_crossover_probability),
     ("crossover.forest", check_crossover_forest),
     ("crossover.guards", check_crossover_guards),
+    ("baseline.circuit", check_baseline_circuit),
 ]
 
 
