@@ -352,6 +352,15 @@ pela posição no desenho.
   `HybridConfig`/`BaselineConfig` e usa `QUBOInstance.fitness_many`.
 - [x] **Forma da floresta:** híbrido usa `PATH` com `max_degree=2`; baseline usa
   `STAR` com `max_degree=None`.
+- [x] **Baseline fiel ao Algorithm 1:** `H` **só** na população inicial; cada
+  geração nasce de `|0>^S` e usa `RY/X/CX` na ordem dos pares. O `X` do alvo
+  segue o **tipo do par** (`N` inverte, `P` não). A regra literal do
+  pseudocódigo (`if xb1[n1] == 1: X(n2)`) fica em
+  `BaselineConfig.paper_x_rule=True` e **inverte o alvo** quando o bit do pai
+  no alvo é 1 (medido: `P(1,1) → 10` em 95% dos shots).
+- [x] **`H` por geração está descartado:** além de não estar no paper, ele
+  deixava todo controle em `|+>` e os CNOTs sem efeito na marginal `Z`.
+  Medido: TVD(PATH com CNOT, PATH sem CNOT) = `0.00000`.
 
 ---
 
@@ -365,6 +374,16 @@ pela posição no desenho.
 5. [ ] **Two-stage:** manter `k=50` ou refinar o top-2 com mais shots?
 6. [ ] **Prioridade da ablação:** sem CNOT + Clifford vs Hilbert + bias RY é o
    mínimo; “mais/menos 1Q” só se a contagem variar.
+7. [ ] **Ordem `RY`/`CNOT` no híbrido.** Sequencial (cada controle com seu `RY`
+   antes do `CX`) preserva o viés de cada qubit, mas custa ~2 camadas por
+   aresta: `PATH` deu profundidade 38 contra 21 do `STAR` em `S=20`. Todos os
+   `RY` antes de todos os `CNOT` volta a 2 camadas, mas cada `RY` de um nó que
+   também é alvo é sobrescrito, sobrando 1 viés por cadeia. Escolher qual dos
+   dois o híbrido otimiza.
+8. [ ] **Forma do baseline na comparação principal.** Com o baseline fiel,
+   `STAR` tem 1 bit enviesado e `PATH` tem `~S-2`; comparar nosso `PATH` com um
+   baseline `STAR` confunde topologia com indivíduo. Recomendação: `PATH` nos
+   dois na comparação principal e `STAR` como reprodução do paper.
 
 ---
 
