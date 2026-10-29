@@ -255,6 +255,11 @@ class BaselineConfig:
     O baseline usa um shot por circuito por padrão, como no paper. Para uma
     comparação justa com o híbrido (que usa ``shots`` maiores), pode-se
     configurar o mesmo número de shots aqui.
+
+    ``paper_x_rule`` controla a regra do ``X`` no alvo dos pares. O default
+    (``False``) usa o tipo do par: ``N`` inverte o alvo, ``P`` não. Com
+    ``True``, reproduz literalmente o pseudocódigo (``if xb1[n1] == 1``), que
+    inverte o alvo sempre que o bit do pai no alvo vale 1.
     """
 
     population_size: int = 20
@@ -265,6 +270,7 @@ class BaselineConfig:
     forest_shape: ForestShape = ForestShape.STAR
     max_degree: int | None = None
     accumulated_pool: bool = False
+    paper_x_rule: bool = False
     seed: int = 42
     backend: BackendKind = BackendKind.STATEVECTOR
     evaluation_mode: EvaluationMode = EvaluationMode.SCALAR
@@ -280,6 +286,7 @@ class BaselineConfig:
         _require_probability("p_s", self.p_s)
 
         _require_bool("accumulated_pool", self.accumulated_pool)
+        _require_bool("paper_x_rule", self.paper_x_rule)
         _require_bool("verbose", self.verbose)
         _require_enum("backend", self.backend, BackendKind)
         _require_enum("evaluation_mode", self.evaluation_mode, EvaluationMode)
