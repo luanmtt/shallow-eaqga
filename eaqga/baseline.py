@@ -4,10 +4,22 @@ O baseline mantém a população como bitstrings: cada circuito é medido e a
 bitstring resultante é avaliada pelo QUBO. Os dois melhores bitstrings viram
 o pool; todos os ``N`` circuitos da próxima geração são gerados a partir deles.
 
+Fidelidade ao Algorithm 1:
+
+- ``H`` aparece **só na população inicial** (linhas 2-8). A partir da primeira
+  geração, todo circuito nasce de ``|0>^S`` (``QC^p ← QC0``) e usa apenas
+  ``RY``/``X``/``CX``. Não há camada ``H`` por geração;
+- o ``RY`` do controle e o ``CX`` do par são aplicados **na ordem dos pares**
+  (``SelectedEntangledQubits``), não em duas camadas separadas;
+- qubits fora dos pares selecionados recebem ``RY`` no fim;
+- ``X`` no alvo segue o tipo do par (``P``/``N``). A regra literal do
+  pseudocódigo (``if xb1[n1] == 1: X(n2)``) fica atrás de
+  :attr:`BaselineConfig.paper_x_rule`, porque ela inverte o alvo sempre que o
+  bit do pai naquele alvo vale 1.
+
 Diferenças em relação ao nosso híbrido:
 
-- o baseline usa ``RY`` nos controles/raízes para enviesar os bits;
-- não há genoma 1Q herdado;
+- o baseline usa ``RY`` para enviesar os bits; não há genoma 1Q herdado;
 - não há mutação;
 - a população é toda nova a cada geração (sem cópia explícita dos pais).
 
@@ -158,7 +170,11 @@ def _ry_angle(bit: str, p_a: float) -> float:
 
 
 def build_uniform_circuit(size: int) -> QuantumCircuit:
-    """Circuito inicial do baseline: ``H`` em todos os qubits e medição."""
+    """Circuito da **população inicial**: ``H`` em todos os qubits e medição.
+
+    Corresponde às linhas 2-8 do Algorithm 1. É o único ponto do baseline com
+    ``H``; as gerações seguintes nascem de ``|0>^S``.
+    """
 
     if isinstance(size, bool) or not isinstance(size, int) or size < 1:
         raise ValueError(f"size deve ser int >= 1, recebeu {size!r}.")
@@ -177,13 +193,30 @@ def build_baseline_circuit(
     best_bits: str,
     forest: Forest,
     p_a: float,
+    *,
+    paper_x_rule: bool = False,
 ) -> QuantumCircuit:
-    """Monta o circuito do baseline para uma floresta já sorteada.
+    """Monta o circuito de crossover do baseline fiel ao Algorithm 1.
 
-    O circuito é ``H^S → RY → CNOTs → medida``. Aplicamos ``RY`` nos nós sem
-    aresta de entrada (raízes e isolados) e não nos alvos. Em ``STAR``, isso
-    coincide com o paper: o centro recebe ``RY`` e as folhas não. Em
-    ``PATH``/``BOUNDED``, isso evita sobrescrever o alvo de um CNOT anterior.
+    O circuito **não** tem ``H``: ele é construído a partir de ``|0>^S``, como
+    na linha ``QC^p ← QC0`` do paper. A camada ``H`` existe apenas na população
+    inicial (:func:`build_uniform_circuit`).
+
+    Para cada par ``(n1, n2)``, na ordem em que foi selecionado:
+
+    - ``RY`` no controle ``n1`` com o ângulo do bit de ``best_bits[n1]``;
+    - ``X`` no alvo se o par for ``NEGATIVE`` (ou se ``paper_x_rule``);
+    - ``CX(n1, n2)``.
+
+    Um qubit que aparece como controle em vários pares recebe ``RY`` **uma
+    vez**, antes do primeiro ``CX`` que ele controla; repetir a mesma rotação
+    k vezes equivaleria a ``RY(k·θ)``, o que afastaria a probabilidade de
+    ``p_a``. Qubits fora de todos os pares recebem ``RY`` no fim.
+
+    ``paper_x_rule=True`` reproduz a literalidade do pseudocódigo:
+    ``if xb1[n1] == 1: X(n2)``. Isso **inverte** o alvo quando o bit do pai no
+    alvo é 1, então o default é a regra por tipo de par (``P`` não inverte,
+    ``N`` inverte), que é a que conserva a correlação observada nos pais.
     """
 
     bits = _require_bits(best_bits, "best_bits")
@@ -196,7 +229,13 @@ def build_baseline_circuit(
     if isinstance(p_a, bool) or not isinstance(p_a, (int, float)):
         raise TypeError(f"p_a deve ser float, recebeu {type(p_a).__name__}.")
     if not 0.0 < float(p_a) < 1.0:
-        raise ValueError(f"p_a deve estar em (0, 1), recebeu {p_a}.")
+        raise ValueError(f"p_a deve estar em (0, 1), recebido {p_a}.")
+
+    if not isinstance(paper_x_rule, bool):
+        raise TypeError(
+            "paper_x_rule deve ser bool, recebeu "
+            f"{type(paper_x_rule).__name__}."
+        )
 
     incoming: set[int] = set()
 
@@ -206,6 +245,10 @@ def build_baseline_circuit(
                 f"aresta {edge.control}->{edge.target} fora do intervalo "
                 f"S={size}."
             )
+        if edge.control == edge.target:
+            raise ValueError(
+                f"aresta {edge.control}->{edge.target} é um laço."
+            )
         if edge.target in incoming:
             raise ValueError(
                 "floresta com alvo múltiplo: "
@@ -213,29 +256,33 @@ def build_baseline_circuit(
             )
         incoming.add(edge.target)
 
+    # |0>^S: o H do paper é só a população inicial, não a crossover.
     circuit = QuantumCircuit(size, size)
 
-    for qubit in range(size):
-        circuit.h(qubit)
+    rotated: set[int] = set()
+    entangled: set[int] = set()
 
-    circuit.barrier()
+    for edge in forest.edges:
+        entangled.add(edge.control)
+        entangled.add(edge.target)
+
+        if edge.control not in rotated:
+            circuit.ry(_ry_angle(bits[edge.control], float(p_a)), edge.control)
+            rotated.add(edge.control)
+
+        flip = (
+            bits[edge.control] == "1"
+            if paper_x_rule
+            else edge.kind is CorrelationKind.NEGATIVE
+        )
+        if flip:
+            circuit.x(edge.target)
+
+        circuit.cx(edge.control, edge.target)
 
     for qubit in range(size):
-        if qubit not in incoming:
+        if qubit not in entangled:
             circuit.ry(_ry_angle(bits[qubit], float(p_a)), qubit)
-
-    circuit.barrier()
-
-    for layer in forest.layers:
-        for edge in layer:
-            if edge.control >= size or edge.target >= size:
-                raise ValueError(
-                    f"aresta {edge.control}->{edge.target} fora do "
-                    f"intervalo S={size}."
-                )
-            if edge.kind is CorrelationKind.NEGATIVE:
-                circuit.x(edge.target)
-            circuit.cx(edge.control, edge.target)
 
     circuit.barrier()
     circuit.measure(range(size), range(size))
@@ -387,6 +434,7 @@ def run_baseline(
                 first.bits,
                 forest,
                 config.p_a,
+                paper_x_rule=config.paper_x_rule,
             )
             individual = _measure_circuit(
                 circuit,
