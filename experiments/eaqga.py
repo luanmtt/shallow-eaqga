@@ -304,6 +304,7 @@ def _build_tasks(
     sigma: np.ndarray,
     universes: dict[int, list[tuple[int, ...]]],
     *,
+    algorithms: list[str],
     populations: list[int],
     runs: int,
     generations: int,
@@ -320,7 +321,7 @@ def _build_tasks(
             subset_sigma = sigma[np.ix_(indices, indices)].copy()
 
             for population in populations:
-                for algorithm in ("baseline", "ours"):
+                for algorithm in algorithms:
                     for run in range(runs):
                         tasks.append(
                             RunSpec(
@@ -502,50 +503,72 @@ def _summary_rows(
 
 
 def _print_table(summary: list[SummaryRow]) -> None:
+    """Imprime as duas linhas sempre; algoritmos ausentes viram ``—``.
+
+    A comparação é o produto do script, então a tabela não muda de forma
+    quando só um algoritmo roda: ela mostra o que faltou e marca o Δ% como
+    indisponível.
+    """
+
     header = (
         f"{'algoritmo':<10} {'fitness':>10} {'std':>10} "
         f"{'gap_ref':>10} {'gen méd':>8} {'tempo/run':>10}"
     )
+    blank = f"  {'—':>10} {'—':>10} {'—':>10} {'—':>8} {'—':>9}"
 
-    current: tuple[int, int] | None = None
+    lookup = {
+        (row["size"], row["population"], row["algorithm"]): row
+        for row in summary
+    }
+    groups = sorted({(row["size"], row["population"]) for row in summary})
 
-    for row in summary:
-        key = (row["size"], row["population"])
-        if key != current:
-            current = key
-            group = [
-                item
-                for item in summary
-                if (item["size"], item["population"]) == key
-            ]
-            runs = sum(item["runs"] for item in group)
-            print()
-            print(
-                sepComment(
-                    40,
-                    stylePrint(
-                        f"S={row['size']} · pop={row['population']} · "
-                        f"{runs} execuções",
-                        C,
-                        bold=True,
-                    ),
-                )
-            )
-            print(f"  {stylePrint(header, C, bold=True)}")
-
-        print(
-            f"  {row['algorithm']:<10} "
-            f"{formatValue(row['fitness_mean'] * 100):>10} "
-            f"{formatValue(row['fitness_std'] * 100):>10} "
-            f"{formatValue(row['gap_ref'] * 100):>10} "
-            f"{row['generation_mean']:>8.1f} "
-            f"{row['elapsed_mean']:>9.1f}s"
+    for size, population in groups:
+        runs = sum(
+            lookup[(size, population, algorithm)]["runs"]
+            for algorithm in ("baseline", "ours")
+            if (size, population, algorithm) in lookup
         )
 
-        if not math.isnan(row["delta_pct_vs_baseline"]):
+        print()
+        print(
+            sepComment(
+                40,
+                stylePrint(
+                    f"S={size} · pop={population} · {runs} execuções",
+                    C,
+                    bold=True,
+                ),
+            )
+        )
+        print(f"  {stylePrint(header, C, bold=True)}")
+
+        present: list[str] = []
+
+        for algorithm in ("baseline", "ours"):
+            row = lookup.get((size, population, algorithm))
+            if row is None:
+                print(f"  {algorithm:<10}{blank}")
+                continue
+
+            present.append(algorithm)
+            print(
+                f"  {algorithm:<10} "
+                f"{formatValue(row['fitness_mean'] * 100):>10} "
+                f"{formatValue(row['fitness_std'] * 100):>10} "
+                f"{formatValue(row['gap_ref'] * 100):>10} "
+                f"{row['generation_mean']:>8.1f} "
+                f"{row['elapsed_mean']:>9.1f}s"
+            )
+
+        if len(present) == 2:
             print(
                 f"  {stylePrint('Δ% ours vs baseline', C)}: "
-                f"{row['delta_pct_vs_baseline']:+.2f}%"
+                f"{lookup[(size, population, 'ours')]['delta_pct_vs_baseline']:+.2f}%"
+            )
+        else:
+            print(
+                f"  {stylePrint('Δ% ours vs baseline', C)}: — "
+                "(rode os dois algoritmos)"
             )
 
     print()
@@ -594,6 +617,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--subsets", type=int, default=10)
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--generations", type=int, default=20)
+    parser.add_argument(
+        "--algorithms",
+        nargs="+",
+        choices=("baseline", "ours"),
+        default=["baseline", "ours"],
+        help="quais algoritmos rodam; a tabela sempre compara os dois.",
+    )
     parser.add_argument(
         "--universe",
         choices=("sp500", "default"),
@@ -742,6 +772,7 @@ def main(argv: list[str] | None = None) -> int:
         data.mu,
         data.sigma,
         universes,
+        algorithms=args.algorithms,
         populations=args.population,
         runs=args.runs,
         generations=args.generations,
