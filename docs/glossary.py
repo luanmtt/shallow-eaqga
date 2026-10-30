@@ -10,17 +10,23 @@ declaradas no código — se alguém adicionar ``--nova-flag`` e esquecer daqui,
 check acusa.
 
 Uso:
-    python glossary.py                 # tudo
-    python glossary.py eaqga           # só endpoints que contêm "eaqga"
-    python glossary.py --check         # valida flags contra o código
+    python docs/glossary.py                 # tudo
+    python docs/glossary.py eaqga           # só endpoints que contêm "eaqga"
+    python docs/glossary.py --check         # valida flags contra o código
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) in sys.path:
+    sys.path.remove(str(_ROOT))
+sys.path.insert(0, str(_ROOT))
 
 from eaqga.utils.embellish import stylePrint
 
@@ -34,7 +40,6 @@ MUTED = "#6c7086"
 OK_COLOR = "#a6e3a1"
 FAIL_COLOR = "#ff6b6b"
 
-_ROOT = Path(__file__).resolve().parent
 _RULE_WIDTH = 78
 
 
@@ -88,9 +93,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         note="sem flag roda os dois; exige Qiskit/Aer.",
     ),
     Endpoint(
-        path="experiments/eaqga.py",
+        path="eaqga.py",
         summary="Experimento principal: runs.csv + tabela comparativa (Tabelas I/II).",
-        command=".venv/bin/python experiments/eaqga.py --quick",
+        command=".venv/bin/python eaqga.py --quick",
         flags=(
             Flag("--quick", "smoke: S=10, 2 subsets, 2 runs, 3 gerações, pop 5."),
             Flag("--sizes N [N ...]", "tamanhos do problema (default: 30 40)."),
@@ -112,9 +117,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         note="a tabela sempre compara baseline × ours, mesmo com --algorithms.",
     ),
     Endpoint(
-        path="glossary.py",
+        path="docs/glossary.py",
         summary="Este arquivo: endpoints, flags e exemplos.",
-        command="python glossary.py",
+        command="python docs/glossary.py",
         flags=(
             Flag("[filtro]", "mostra só endpoints que contêm o texto."),
             Flag("--check", "compara as flags listadas com o código."),
