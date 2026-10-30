@@ -28,9 +28,9 @@ GPU (`statevector_gpu`) fica para depois: os benchmarks antigos deram 1.79× em
 16 qubits e 0.98× em 24. Ver `docs/04-aer-memoria-e-gpu.md`.
 
 Uso:
-    python experiments/eaqga.py --quick
-    python experiments/eaqga.py --sizes 30 --population 20 --runs 100
-    python experiments/eaqga.py --sizes 30 40 --population 10 20 --save-table
+    python eaqga.py --quick
+    python eaqga.py --sizes 30 --population 20 --runs 100
+    python eaqga.py --sizes 30 40 --population 10 20 --save-table
 """
 
 from __future__ import annotations
@@ -49,11 +49,11 @@ from pathlib import Path
 from collections.abc import Iterator
 from typing import TypedDict, cast
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parent
 
-# O script se chama ``eaqga.py``; se ``experiments/`` ficar antes da raiz no
-# sys.path, ``import eaqga`` acha este arquivo em vez do pacote. Forçamos a raiz
-# na frente — sempre, não só quando ausente.
+# O script se chama ``eaqga.py`` e convive com o pacote ``eaqga/``. Pacote tem
+# precedência sobre módulo no mesmo diretório, mas não dependemos disso: a raiz
+# vai para a frente do sys.path mesmo quando já está lá.
 if str(_ROOT) in sys.path:
     sys.path.remove(str(_ROOT))
 sys.path.insert(0, str(_ROOT))
