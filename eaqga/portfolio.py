@@ -179,11 +179,16 @@ def download_prices(
     tickers: Sequence[str],
     start: str = PAPER_START,
     end: str = PAPER_END,
+    *,
+    strict: bool = True,
 ) -> pd.DataFrame:
     """Baixa preços ajustados diários via ``yfinance``.
 
     ``end`` é **inclusivo** aqui (o Yahoo trata o argumento como exclusivo, então
     somamos um dia). Devolve um DataFrame ``datas × tickers``.
+
+    ``strict=False`` descarta tickers sem dados em vez de levantar. É o modo
+    usado para baixar o S&P 500 inteiro, onde algum ticker sempre falha.
     """
 
     symbols = _require_tickers(tickers)
@@ -215,10 +220,15 @@ def download_prices(
             "yfinance devolveu vazio. Verifique conexão/tickers ou use o cache."
         )
 
-    return _extract_close(data, symbols)
+    return _extract_close(data, symbols, strict=strict)
 
 
-def _extract_close(data: pd.DataFrame, tickers: tuple[str, ...]) -> pd.DataFrame:
+def _extract_close(
+    data: pd.DataFrame,
+    tickers: tuple[str, ...],
+    *,
+    strict: bool = True,
+) -> pd.DataFrame:
     """Extrai a matriz de fechamento, aceitando 1 ou vários tickers."""
 
     if isinstance(data.columns, pd.MultiIndex):
@@ -239,10 +249,15 @@ def _extract_close(data: pd.DataFrame, tickers: tuple[str, ...]) -> pd.DataFrame
         close.columns = [tickers[0]]
 
     missing = [ticker for ticker in tickers if ticker not in close.columns]
-    if missing:
+    if missing and strict:
         raise RuntimeError(f"tickers sem dados no período: {missing}.")
+    if missing:
+        warnings.warn(
+            f"{len(missing)} tickers sem dados foram descartados: {missing[:10]}",
+            stacklevel=2,
+        )
 
-    close = close.loc[:, list(tickers)]
+    close = close.loc[:, [ticker for ticker in tickers if ticker in close.columns]]
     close = cast(pd.DataFrame, close)
     close.index = pd.to_datetime(close.index)
     close = close.sort_index()
@@ -286,12 +301,15 @@ def load_prices(
     end: str = PAPER_END,
     *,
     refresh: bool = False,
+    strict: bool = True,
     directory: str | Path = DEFAULT_CACHE_DIR,
 ) -> pd.DataFrame:
     """Carrega preços do cache; baixa e cacheia quando necessário."""
 
     if not isinstance(refresh, bool):
         raise TypeError(f"refresh deve ser bool, recebeu {type(refresh).__name__}.")
+    if not isinstance(strict, bool):
+        raise TypeError(f"strict deve ser bool, recebeu {type(strict).__name__}.")
 
     symbols = _require_tickers(tickers)
     path = cache_path(symbols, start, end, directory)
@@ -300,7 +318,7 @@ def load_prices(
         frame = pd.read_csv(path, index_col=0, parse_dates=True)
         return _clean_prices(frame, symbols)
 
-    frame = download_prices(symbols, start, end)
+    frame = download_prices(symbols, start, end, strict=strict)
     cleaned = _clean_prices(frame, symbols)
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -409,12 +427,20 @@ def build_portfolio(
     end: str = PAPER_END,
     *,
     refresh: bool = False,
+    strict: bool = True,
     directory: str | Path = DEFAULT_CACHE_DIR,
 ) -> PortfolioData:
     """Baixa/carrega preços e devolve ``PortfolioData`` com ``μ`` e ``Σ``."""
 
     symbols = _require_tickers(tickers)
-    prices = load_prices(symbols, start, end, refresh=refresh, directory=directory)
+    prices = load_prices(
+        symbols,
+        start,
+        end,
+        refresh=refresh,
+        strict=strict,
+        directory=directory,
+    )
     returns = returns_from_prices(prices)
     mu, sigma = mean_covariance(returns)
 
