@@ -1,29 +1,32 @@
 """Smoke test do pipeline do EAQGA com um dataset dummy.
 
-O baseline usa o runner real em ``eaqga.baseline`` (Qiskit/Aer). O "ours"
-ainda é um surrogate clássico de bitstrings, porque ``individuo.py`` e
-``runner.py`` reais ainda não existem. O objetivo é comparar o encanamento:
+Os dois algoritmos são reais agora:
 
-    dataset dummy → fitness QUBO → top-2 → crossover → mutação → métricas
+- **baseline** (``eaqga.baseline``): fiel ao Algorithm 1, ``RY`` nos controles,
+  1 shot por circuito, topologia ``STAR``;
+- **ours** (``eaqga.runner``): genoma 1Q (``H^S`` fixo + colunas Hilbert),
+  floresta ``PATH`` reconstruída dos pais, 50 shots por circuito, mutação 1Q.
 
-O baseline é fiel ao paper: ``H^S → RY → CNOTs → medida``, um shot por
-circuito, top-2 da geração. O "ours" usa uma versão bit-a-bit da ideia de
-entrelaçamento (pares P/N dos dois pais) e serve só como placeholder.
+O objetivo é comparar o **encanamento** no mesmo dummy:
+
+    dataset dummy → fitness QUBO → top-2 → floresta → genoma/mutação → métricas
+
+Baseline e híbrido não são apples-to-apples: mudam shots (1 × 50) e topologia
+(``STAR`` × ``PATH``). A comparação de mérito vem depois, com dados reais e
+mesma configuração.
 
 Uso:
-    python tests/test.py              # baseline real + ours surrogate
-    python tests/test.py --baseline   # só baseline real (precisa de Qiskit)
-    python tests/test.py --ours       # só ours surrogate
+    python tests/test.py              # baseline + híbrido (precisa de Qiskit)
+    python tests/test.py --baseline   # só o baseline fiel
+    python tests/test.py --ours       # só o híbrido
 """
 
 from __future__ import annotations
 
 import argparse
 import math
-import random
 import statistics
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +39,8 @@ from eaqga.config import (
     BaselineConfig,
     EvaluationMode,
     ForestShape,
+    GateSet,
+    HybridConfig,
 )
 from eaqga.instance import QUBOInstance, synthetic_qubo
 from eaqga.utils.embellish import sepComment, stylePrint
@@ -47,20 +52,16 @@ FAIL_COLOR = "#ff6b6b"
 
 POPULATION_SIZE = 5
 GENERATIONS = 5
-MUTATION_RATE = 0.10
 P_A = 0.95
 P_S = 0.60
-PARENT_BIAS = 0.75
 SEED = 42
+
+HYBRID_SHOTS = 50
+HYBRID_COLUMNS = 3
+HYBRID_MUTATION = 0.10
 
 DUMMY_S = 4
 DUMMY_SEED = 7
-
-
-@dataclass(frozen=True, slots=True)
-class Individual:
-    bits: str
-    fitness: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,7 @@ class RunResult:
     best_bits: str
     final_mean: float
     final_std: float
+    final_unique: int
     evaluations: int
     elapsed_s: float
     best_generation: int | None = None
@@ -82,93 +84,54 @@ class RunResult:
         return math.isclose(self.best, optimum, rel_tol=0.0, abs_tol=tol)
 
 
-def _random_bits(rng: random.Random, size: int) -> str:
-    return "".join(rng.choice("01") for _ in range(size))
+def _initial_value(result: object) -> float:
+    """Extrai ``history['best'][0]`` de um resultado, com guard de tipo."""
+
+    history = getattr(result, "history")
+    value = history["best"][0]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            "history['best'][0] deveria ser numérico, recebeu "
+            f"{type(value).__name__}."
+        )
+    return float(value)
 
 
-def _evaluate(bits: str, instance: QUBOInstance) -> Individual:
-    return Individual(bits=bits, fitness=instance.fitness(bits))
+def _as_run_result(
+    name: str,
+    result: object,
+) -> RunResult:
+    """Adapta um resultado do baseline/híbrido à tabela do teste."""
 
+    final_population = getattr(result, "final_population")
+    final_values = [individual.fitness for individual in final_population]
+    final_unique = len({individual.bits for individual in final_population})
 
-def _evaluate_population(
-    bitstrings: list[str],
-    instance: QUBOInstance,
-) -> list[Individual]:
-    return [_evaluate(bits, instance) for bits in bitstrings]
-
-
-def _select_elites(population: list[Individual]) -> list[Individual]:
-    ranked = sorted(population, key=lambda ind: ind.fitness, reverse=True)
-    return ranked[:2]
-
-
-def _mutate(
-    bits: str,
-    rng: random.Random,
-    mutation_rate: float,
-) -> str:
-    flipped = [
-        ("1" if char == "0" else "0") if rng.random() < mutation_rate else char
-        for char in bits
-    ]
-    return "".join(flipped)
-
-
-def _correlation_pairs(
-    first: str,
-    second: str,
-) -> list[tuple[int, int, str]]:
-    """Pares P/N entre os dois pais, no espírito do crossover do EAQGA."""
-
-    pairs: list[tuple[int, int, str]] = []
-
-    for i in range(len(first)):
-        for j in range(i + 1, len(first)):
-            if first[i] == first[j] and second[i] == second[j]:
-                pairs.append((i, j, "P"))
-            elif first[i] != first[j] and second[i] != second[j]:
-                pairs.append((i, j, "N"))
-
-    return pairs
-
-
-def _apply_correlations(
-    bits: str,
-    pairs: list[tuple[int, int, str]],
-    rng: random.Random,
-    p_s: float,
-) -> str:
-    result = list(bits)
-
-    for i, j, kind in pairs:
-        if rng.random() >= p_s:
-            continue
-
-        if kind == "P":
-            result[j] = result[i]
-        else:
-            result[j] = "1" if result[i] == "0" else "0"
-
-    return "".join(result)
-
-
-def _mean_std(population: list[Individual]) -> tuple[float, float]:
-    values = [ind.fitness for ind in population]
-    mean = statistics.fmean(values)
-    std = statistics.stdev(values) if len(values) > 1 else 0.0
-    return mean, std
+    return RunResult(
+        name=name,
+        initial_best=_initial_value(result),
+        best=float(getattr(result, "best_fitness")),
+        best_bits=str(getattr(result, "best_bits")),
+        final_mean=statistics.fmean(final_values),
+        final_std=(
+            statistics.stdev(final_values) if len(final_values) > 1 else 0.0
+        ),
+        final_unique=final_unique,
+        evaluations=int(getattr(result, "evaluations")),
+        elapsed_s=float(getattr(result, "elapsed_s")),
+        best_generation=int(getattr(result, "best_generation")),
+    )
 
 
 def run_baseline_real(instance: QUBOInstance) -> RunResult:
-    """Roda o baseline real (Qiskit/Aer) e adapta para a tabela do teste."""
+    """Roda o baseline fiel (Qiskit/Aer) e adapta para a tabela."""
 
     try:
         from eaqga.baseline import run_baseline as run_baseline_qiskit
     except ImportError as exc:
         print(
             stylePrint(
-                "Qiskit/Aer indisponível para --baseline. "
-                "Instale requirements.txt ou use --ours.",
+                "Qiskit/Aer indisponível. Instale requirements.txt.",
                 FAIL_COLOR,
                 bold=True,
             )
@@ -190,94 +153,41 @@ def run_baseline_real(instance: QUBOInstance) -> RunResult:
         verbose=False,
     )
 
-    result = run_baseline_qiskit(instance, config)
+    return _as_run_result("baseline", run_baseline_qiskit(instance, config))
 
-    final_values = [ind.fitness for ind in result.final_population]
-    initial_value = result.history["best"][0]
-    if isinstance(initial_value, bool) or not isinstance(initial_value, (int, float)):
-        raise TypeError(
-            "history['best'][0] deveria ser numérico, recebeu "
-            f"{type(initial_value).__name__}."
+
+def run_hybrid_real(instance: QUBOInstance) -> RunResult:
+    """Roda o nosso indivíduo no laço do EAQGA e adapta para a tabela."""
+
+    try:
+        from eaqga.runner import run_hybrid
+    except ImportError as exc:
+        print(
+            stylePrint(
+                "Qiskit/Aer indisponível. Instale requirements.txt.",
+                FAIL_COLOR,
+                bold=True,
+            )
         )
+        raise SystemExit(2) from exc
 
-    return RunResult(
-        name="baseline",
-        initial_best=float(initial_value),
-        best=result.best_fitness,
-        best_bits=result.best_bits,
-        final_mean=statistics.fmean(final_values),
-        final_std=(
-            statistics.stdev(final_values)
-            if len(final_values) > 1
-            else 0.0
-        ),
-        evaluations=result.evaluations,
-        elapsed_s=result.elapsed_s,
-        best_generation=result.best_generation,
+    config = HybridConfig(
+        population_size=POPULATION_SIZE,
+        generations=GENERATIONS,
+        shots=HYBRID_SHOTS,
+        num_columns=HYBRID_COLUMNS,
+        gate_set=GateSet.HILBERT_1Q,
+        forest_shape=ForestShape.PATH,
+        max_degree=2,
+        mutation_rate=HYBRID_MUTATION,
+        p_s=P_S,
+        seed=SEED,
+        backend=BackendKind.STATEVECTOR,
+        evaluation_mode=EvaluationMode.SCALAR,
+        verbose=False,
     )
 
-
-def run_ours_surrogate(
-    instance: QUBOInstance,
-    *,
-    seed: int = SEED,
-    population_size: int = POPULATION_SIZE,
-    generations: int = GENERATIONS,
-    mutation_rate: float = MUTATION_RATE,
-    p_s: float = P_S,
-) -> RunResult:
-    """Surrogate do nosso crossover: copia um pai, reforça P/N e muta."""
-
-    rng = random.Random(seed)
-    population = _evaluate_population(
-        [_random_bits(rng, instance.S) for _ in range(population_size)],
-        instance,
-    )
-
-    initial_best = max(ind.fitness for ind in population)
-    best = max(population, key=lambda ind: ind.fitness)
-    best_generation = 0
-    evaluations = population_size
-    start = time.perf_counter()
-
-    for generation in range(1, generations + 1):
-        parents = _select_elites(population)
-        pairs = _correlation_pairs(parents[0].bits, parents[1].bits)
-        children: list[str] = []
-
-        for _ in range(population_size):
-            parent = parents[0] if rng.random() < PARENT_BIAS else parents[1]
-
-            # No circuito real a mutação acontece nas 1Q antes dos CNOTs.
-            # Aqui, como surrogate de bitstring, aplicamos as correlações
-            # P/N e depois mutamos; o alvo é exercitar a lógica de
-            # entrelaçamento, não reproduzir o circuito.
-            bits = _apply_correlations(parent.bits, pairs, rng, p_s)
-            bits = _mutate(bits, rng, mutation_rate)
-            children.append(bits)
-
-        population = _evaluate_population(children, instance)
-        evaluations += population_size
-
-        current = max(population, key=lambda ind: ind.fitness)
-        if current.fitness > best.fitness:
-            best = current
-            best_generation = generation
-
-    final_mean, final_std = _mean_std(population)
-    elapsed = time.perf_counter() - start
-
-    return RunResult(
-        name="ours (sur.)",
-        initial_best=initial_best,
-        best=best.fitness,
-        best_bits=best.bits,
-        final_mean=final_mean,
-        final_std=final_std,
-        evaluations=evaluations,
-        elapsed_s=elapsed,
-        best_generation=best_generation,
-    )
+    return _as_run_result("ours", run_hybrid(instance, config))
 
 
 def _check_result(
@@ -330,19 +240,25 @@ def _print_header(
     print(f"  {stylePrint('• população', C)}: {POPULATION_SIZE}")
     print(f"  {stylePrint('• gerações', C)}: {GENERATIONS}")
     print(f"  {stylePrint('• seed', C)}: {SEED}")
-    print(f"  {stylePrint('• p_a', C)}: {P_A}   {stylePrint('p_s', C)}: {P_S}")
     print(
         f"  {stylePrint('• brute force', C)}: {brute_bits} "
         f"fitness={formatValue(brute_value)}"
     )
     if do_baseline:
-        print(f"  {stylePrint('• baseline', C)}: Qiskit EAQGA (real)")
+        print(
+            f"  {stylePrint('• baseline', C)}: EAQGA fiel · 1 shot · "
+            f"STAR · p_a={P_A}"
+        )
     if do_ours:
-        print(f"  {stylePrint('• ours', C)}: surrogate clássico")
+        print(
+            f"  {stylePrint('• ours', C)}: híbrido · {HYBRID_SHOTS} shots · "
+            f"PATH d≤2 · {HYBRID_COLUMNS} colunas Hilbert · "
+            f"mut={HYBRID_MUTATION}"
+        )
     if do_baseline and do_ours:
         print(
-            f"  {stylePrint('• nota', C)}: baseline real × ours surrogate "
-            "(comparação não é apples-to-apples)"
+            f"  {stylePrint('• nota', C)}: shots e topologia diferem; "
+            "compara o encanamento, não o mérito."
         )
     print()
 
@@ -355,8 +271,9 @@ def _print_results(
     print(sepComment(40, stylePrint("Resultados", C, bold=True)))
 
     header = (
-        f"{'algoritmo':<12} {'best':>16} {'gap':>16} "
-        f"{'mean final':>16} {'std':>16} {'evals':>6} {'gen':>5} {'ótimo':>6}"
+        f"{'algoritmo':<12} {'best':>12} {'gap':>12} "
+        f"{'mean final':>12} {'std':>12} {'únicos':>7} "
+        f"{'evals':>6} {'gen':>5} {'ótimo':>6}"
     )
     print(f"  {stylePrint(header, C, bold=True)}")
 
@@ -369,10 +286,11 @@ def _print_results(
         )
         print(
             f"  {result.name:<12} "
-            f"{formatValue(result.best):>16} "
-            f"{formatValue(result.gap_to(brute_value)):>16} "
-            f"{formatValue(result.final_mean):>16} "
-            f"{formatValue(result.final_std):>16} "
+            f"{formatValue(result.best):>12} "
+            f"{formatValue(result.gap_to(brute_value)):>12} "
+            f"{formatValue(result.final_mean):>12} "
+            f"{formatValue(result.final_std):>12} "
+            f"{result.final_unique:>7} "
             f"{result.evaluations:>6} "
             f"{generation:>5} "
             f"{found:>6}"
@@ -392,8 +310,8 @@ def _print_results(
             f"{formatValue(delta_gap)}"
         )
         print(
-            f"  {stylePrint('nota', C)}: ours é surrogate; "
-            "baseline é Qiskit EAQGA."
+            f"  {stylePrint('tempo', C)}: baseline "
+            f"{baseline.elapsed_s:.2f}s · ours {ours.elapsed_s:.2f}s"
         )
 
     print(
@@ -441,12 +359,12 @@ def main() -> int:
     parser.add_argument(
         "--baseline",
         action="store_true",
-        help="roda o baseline real (Qiskit) e compara.",
+        help="roda o baseline fiel (Qiskit) e compara.",
     )
     parser.add_argument(
         "--ours",
         action="store_true",
-        help="roda o surrogate do nosso crossover.",
+        help="roda o híbrido (Qiskit) e compara.",
     )
     args = parser.parse_args()
 
@@ -471,7 +389,7 @@ def main() -> int:
         results.append(run_baseline_real(instance))
 
     if do_ours:
-        results.append(run_ours_surrogate(instance))
+        results.append(run_hybrid_real(instance))
 
     _print_results(results, instance, brute_value)
     return _check_all(results, instance, brute_value)
