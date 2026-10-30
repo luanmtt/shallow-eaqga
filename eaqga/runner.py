@@ -23,6 +23,7 @@ run) sai de :func:`run_row`.
 from __future__ import annotations
 
 import csv
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -40,6 +41,11 @@ from .population import (
     make_children,
     population_metrics,
     top_two,
+)
+from .utils.prints import (
+    GENERATION_HEADER,
+    format_generation_line,
+    make_generation_bars,
 )
 
 __all__ = [
@@ -137,8 +143,16 @@ def run_hybrid(
     config: HybridConfig,
     *,
     simulator: AerSimulator | None = None,
+    progress: bool = False,
+    reference: float | None = None,
 ) -> HybridResult:
-    """Roda o EAQGA híbrido e devolve o histórico completo."""
+    """Roda o EAQGA híbrido e devolve o histórico completo.
+
+    ``progress=True`` imprime uma linha por geração (barras de geração e de
+    fitness). Só faz sentido em processo único: com ``joblib`` paralelo, os
+    workers escreveriam no mesmo terminal. ``reference`` é o alvo da barra de
+    fitness (no experimento, a busca local multi-start).
+    """
 
     if not isinstance(instance, QUBOInstance):
         raise TypeError(
@@ -153,6 +167,21 @@ def run_hybrid(
             "simulator deve ser AerSimulator ou None, recebeu "
             f"{type(simulator).__name__}."
         )
+    if not isinstance(progress, bool):
+        raise TypeError(
+            f"progress deve ser bool, recebeu {type(progress).__name__}."
+        )
+    if reference is not None and (
+        isinstance(reference, bool) or not isinstance(reference, (int, float))
+    ):
+        raise TypeError(
+            "reference deve ser float ou None, recebeu "
+            f"{type(reference).__name__}."
+        )
+
+    target = float(reference) if reference is not None else None
+    if target is not None and not math.isfinite(target):
+        raise ValueError(f"reference deve ser finito, recebeu {reference}.")
 
     engine = simulator if simulator is not None else _make_simulator(config.backend)
     rng = random.Random(config.seed)
@@ -170,6 +199,10 @@ def run_hybrid(
 
     history: dict[str, list[object]] = {column: [] for column in _COLUMNS}
     metrics: list[PopulationMetrics] = []
+    bars = make_generation_bars() if progress else None
+
+    if progress:
+        print(GENERATION_HEADER, flush=True)
 
     def record(
         generation: int,
@@ -195,7 +228,24 @@ def run_hybrid(
         history["forest_chains"].append(forest[2])
         history["best_bits"].append(best_so_far.bits)
 
-    record(0, population_metrics(population, 0))
+    first_metrics = population_metrics(population, 0)
+    record(0, first_metrics)
+
+    if bars is not None:
+        print(
+            format_generation_line(
+                generation=0,
+                generations=config.generations,
+                elapsed=time.perf_counter() - start,
+                best=first_metrics.best,
+                average=first_metrics.mean,
+                unique=first_metrics.unique_bits,
+                generation_bar=bars[0],
+                fitness_bar=bars[1],
+                reference=target,
+            ),
+            flush=True,
+        )
 
     for generation in range(1, config.generations + 1):
         first, second = top_two(population)
@@ -257,6 +307,22 @@ def run_hybrid(
                 sum(chain_counts) / len(chain_counts),
             ),
         )
+
+        if bars is not None:
+            print(
+                format_generation_line(
+                    generation=generation,
+                    generations=config.generations,
+                    elapsed=time.perf_counter() - start,
+                    best=current.best,
+                    average=current.mean,
+                    unique=current.unique_bits,
+                    generation_bar=bars[0],
+                    fitness_bar=bars[1],
+                    reference=target,
+                ),
+                flush=True,
+            )
 
     elapsed = time.perf_counter() - start
 
