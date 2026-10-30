@@ -24,3 +24,4 @@ psutil==7.2.2
 qiskit-finance==0.4.1
 yfinance>=0.2.40
 pandas
+lxml
