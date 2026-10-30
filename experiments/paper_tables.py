@@ -125,6 +125,8 @@ class RunSpec:
     seed: int
     mu: np.ndarray
     sigma: np.ndarray
+    progress: bool = False
+    reference: float | None = None
 
 
 def _run_one(spec: RunSpec) -> RunRow:
@@ -153,7 +155,12 @@ def _run_one(spec: RunSpec) -> RunRow:
             backend=BackendKind.MPS,
             verbose=False,
         )
-        result = run_baseline(instance, config)
+        result = run_baseline(
+            instance,
+            config,
+            progress=spec.progress,
+            reference=spec.reference,
+        )
     else:
         config = HybridConfig(
             population_size=spec.population,
@@ -169,7 +176,12 @@ def _run_one(spec: RunSpec) -> RunRow:
             backend=BackendKind.MPS,
             verbose=False,
         )
-        result = run_hybrid(instance, config)
+        result = run_hybrid(
+            instance,
+            config,
+            progress=spec.progress,
+            reference=spec.reference,
+        )
 
     row: RunRow = {
         "size": spec.size,
@@ -257,6 +269,8 @@ def _build_tasks(
     generations: int,
     shots: dict[str, int],
     seed: int,
+    references: dict[int, float] | None = None,
+    progress: bool = False,
 ) -> list[RunSpec]:
     tasks: list[RunSpec] = []
 
@@ -280,6 +294,8 @@ def _build_tasks(
                                 seed=seed + 10_000 * subset_index + run,
                                 mu=subset_mu,
                                 sigma=subset_sigma,
+                                progress=progress,
+                                reference=(references or {}).get(size),
                             )
                         )
 
@@ -291,12 +307,17 @@ def _run_all(
     path: Path,
     *,
     jobs: int,
+    backend: str = "loky",
+    timings: dict[str, float] | None = None,
 ) -> list[RunRow]:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     rows: list[RunRow] = []
     started = time.perf_counter()
-    interactive = sys.stdout.isatty()
+    single_process = jobs == 1
+    interactive = sys.stdout.isatty() and not (
+        tasks and tasks[0].progress
+    )
     stride = max(1, len(tasks) // 20)
 
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -308,12 +329,15 @@ def _run_all(
             Iterator[RunRow],
             Parallel(
                 n_jobs=jobs,
+                backend=backend,
                 return_as="generator_unordered",
                 verbose=0,
             )(delayed(_run_one)(task) for task in tasks),
         )
 
         for index, row in enumerate(stream, start=1):
+            if index == 1 and timings is not None:
+                timings["primeiro"] = time.perf_counter() - started
             writer.writerow(row)
             handle.flush()
             rows.append(row)
@@ -331,6 +355,8 @@ def _run_all(
             print(f"\r{line}" if interactive else line, end="" if interactive else "\n", flush=True)
 
     print()
+    if timings is not None:
+        timings["execucao"] = time.perf_counter() - started
     return rows
 
 
@@ -481,6 +507,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=_ROOT / "outputs" / "paper_tables",
     )
+    parser.add_argument(
+        "--backend",
+        choices=("loky", "threading"),
+        default="loky",
+        help="'loky' isola processos; 'threading' evita o import por worker.",
+    )
+    parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="barra por geração (default: ligada só com --jobs 1).",
+    )
+    parser.add_argument(
+        "--timings",
+        action="store_true",
+        help="imprime o tempo de cada fase (dados, referência, 1º resultado).",
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument(
         "--quick",
@@ -511,6 +554,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         symbols = DEFAULT_UNIVERSE
 
+    timings: dict[str, float] = {}
+    clock = time.perf_counter()
+
     print(sepComment(40, stylePrint("paper_tables", C, bold=True)))
     print(f"  {stylePrint('• universo', C)}: {len(symbols)} tickers ({args.universe})")
     print(f"  {stylePrint('• período', C)}: {PAPER_START}..{PAPER_END}")
@@ -525,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
             strict=False,
         )
 
+    timings["dados"] = time.perf_counter() - clock
     print(f"  {stylePrint('• dados', C)}: {data.summary()}")
 
     position = {ticker: index for index, ticker in enumerate(data.tickers)}
@@ -558,28 +605,9 @@ def main(argv: list[str] | None = None) -> int:
         "usando MPS."
     )
 
-    tasks = _build_tasks(
-        data.mu,
-        data.sigma,
-        universes,
-        algorithms=args.algorithms,
-        populations=args.population,
-        runs=args.runs,
-        generations=args.generations,
-        shots={"baseline": 1, "ours": 50},
-        seed=args.seed,
-    )
-
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    output = args.output / f"runs-{stamp}.csv"
-
-    print(f"  {stylePrint('• tarefas', C)}: {len(tasks)} · jobs={args.jobs}")
-    print(f"  {stylePrint('• saída', C)}: {output}")
-    print()
-
-    rows = _run_all(tasks, output, jobs=args.jobs)
-
+    clock = time.perf_counter()
     references: dict[int, float] = {}
+
     for size, subsets in universes.items():
         values = []
 
@@ -595,7 +623,62 @@ def main(argv: list[str] | None = None) -> int:
 
         references[size] = statistics.fmean(values)
 
+    timings["referencia"] = time.perf_counter() - clock
+
+    show_progress = args.progress if args.progress is not None else args.jobs == 1
+    if show_progress and args.jobs != 1:
+        print(
+            f"  {stylePrint('• progresso', C)}: desligado (jobs={args.jobs}; "
+            "use --jobs 1 para a barra por geração)."
+        )
+        show_progress = False
+
+    tasks = _build_tasks(
+        data.mu,
+        data.sigma,
+        universes,
+        algorithms=args.algorithms,
+        populations=args.population,
+        runs=args.runs,
+        generations=args.generations,
+        shots={"baseline": 1, "ours": 50},
+        seed=args.seed,
+        references=references,
+        progress=show_progress,
+    )
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    output = args.output / f"runs-{stamp}.csv"
+
+    print(f"  {stylePrint('• tarefas', C)}: {len(tasks)} · jobs={args.jobs} · backend={args.backend}")
+    print(f"  {stylePrint('• saída', C)}: {output}")
+
+    if args.jobs == 1:
+        print(f"  {stylePrint('• workers', C)}: processo único (sem spawn)")
+    else:
+        print(
+            f"  {stylePrint('• workers', C)}: {args.jobs} processos — o 1º "
+            "resultado demora ~1-2 s (import do Qiskit em cada worker)"
+        )
+    print()
+
+    rows = _run_all(
+        tasks,
+        output,
+        jobs=args.jobs,
+        backend=args.backend,
+        timings=timings,
+    )
+
     _print_table(rows, args.sizes, args.population, references)
+
+    if args.timings:
+        print()
+        print(f"  {stylePrint('• tempos', C)}:")
+        print(f"      dados         {timings.get('dados', 0.0):6.2f}s")
+        print(f"      referência    {timings.get('referencia', 0.0):6.2f}s")
+        print(f"      1º resultado  {timings.get('primeiro', 0.0):6.2f}s")
+        print(f"      execução      {timings.get('execucao', 0.0):6.2f}s")
     print(f"\n  {stylePrint('runs.csv', C)}: {output}")
 
     return 0
