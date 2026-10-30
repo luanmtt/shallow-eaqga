@@ -17,6 +17,7 @@ htmlcov/
 
 # Dados e saídas
 data/cache/
+data/prices/
 outputs/
 *.csv
 *.png
