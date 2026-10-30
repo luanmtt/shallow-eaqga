@@ -296,6 +296,8 @@ def _run_all(
 
     rows: list[RunRow] = []
     started = time.perf_counter()
+    interactive = sys.stdout.isatty()
+    stride = max(1, len(tasks) // 20)
 
     with path.open("w", newline="", encoding="utf-8") as handle:
         fieldnames: list[str] = list(RUN_COLUMNS)
@@ -316,14 +318,17 @@ def _run_all(
             handle.flush()
             rows.append(row)
 
+            if index % stride and index != len(tasks):
+                continue
+
             elapsed = time.perf_counter() - started
             rate = index / elapsed if elapsed else 0.0
-            print(
-                f"\r  {index}/{len(tasks)} execuções · {rate:.2f}/s · "
-                f"ETA {((len(tasks) - index) / rate if rate else 0) / 60:.1f} min",
-                end="",
-                flush=True,
+            eta = ((len(tasks) - index) / rate if rate else 0.0) / 60
+            line = (
+                f"  {index}/{len(tasks)} execuções · {rate:.2f}/s · "
+                f"ETA {eta:.1f} min"
             )
+            print(f"\r{line}" if interactive else line, end="" if interactive else "\n", flush=True)
 
     print()
     return rows
