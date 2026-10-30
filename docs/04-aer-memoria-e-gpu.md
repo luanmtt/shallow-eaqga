@@ -58,7 +58,7 @@ Decisões:
 - **MPS é o backend dos experimentos** (`BackendKind.MPS`), como no paper, que
   usou o simulador MPS justamente por isso;
 - `statevector` fica restrito a `S` pequeno (testes, dummy, `S ≤ 20`);
-- `experiments/paper_tables.py` imprime a estimativa de statevector no cabeçalho
+- `experiments/eaqga.py` imprime a estimativa de statevector no cabeçalho
   e usa MPS sempre;
 - `--jobs` default é `min(8, cpu_count)`; a memória cresce linearmente com ele.
 
@@ -91,7 +91,7 @@ continua inviável em 4 GB; o caminho realista é MPS (CPU) ou batching.
 
 ## 3.1 Onde o tempo vai antes do primeiro resultado
 
-O cabeçalho do `paper_tables` sai quase instantâneo; o primeiro resultado não.
+O cabeçalho do `experiments/eaqga.py` sai quase instantâneo; o primeiro resultado não.
 Medido com `--timings` (16 cores, `S=30`):
 
 | fase | tempo |
@@ -121,7 +121,7 @@ Mitigações aplicadas: linha `• workers` antes do dispatch (explica a espera)
 
 ## 4. O que medimos aqui
 
-`experiments/paper_tables.py`, 16 cores, 23 GB:
+`experiments/eaqga.py`, 16 cores, 23 GB:
 
 | cenário | tarefas | tempo | observação |
 |---|---:|---:|---|
