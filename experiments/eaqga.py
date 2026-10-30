@@ -1,9 +1,13 @@
-"""Reproduz as Tabelas I/II do paper (EAQGA × nosso híbrido).
+"""Experimento principal: EAQGA fiel × nosso híbrido, com dados reais.
 
 O protocolo é o do paper: 10 subconjuntos disjuntos de 30 (e 40) ativos do
 S&P 500, período 01/10/2023–30/09/2024, `T_max = 20`. Cada unidade de trabalho é
 **uma execução** (subset, seed, algoritmo); o paralelismo é por execução, com
 `joblib`, não por circuito.
+
+Os dois algoritmos sempre rodam juntos: a comparação baseline × ours é o
+produto do script, não um extra. A tabela agregada sai no terminal e, com
+`--save-table`, também em CSV.
 
 Por que por execução e não por circuito:
 
@@ -24,15 +28,16 @@ GPU (`statevector_gpu`) fica para depois: os benchmarks antigos deram 1.79× em
 16 qubits e 0.98× em 24. Ver `docs/04-aer-memoria-e-gpu.md`.
 
 Uso:
-    python experiments/paper_tables.py --quick
-    python experiments/paper_tables.py --sizes 30 --population 20 --runs 100
-    python experiments/paper_tables.py --sizes 30 40 --population 10 20
+    python experiments/eaqga.py --quick
+    python experiments/eaqga.py --sizes 30 --population 20 --runs 100
+    python experiments/eaqga.py --sizes 30 40 --population 10 20 --save-table
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import random
 import statistics
@@ -45,8 +50,13 @@ from collections.abc import Iterator
 from typing import TypedDict, cast
 
 _ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+
+# O script se chama ``eaqga.py``; se ``experiments/`` ficar antes da raiz no
+# sys.path, ``import eaqga`` acha este arquivo em vez do pacote. Forçamos a raiz
+# na frente — sempre, não só quando ausente.
+if str(_ROOT) in sys.path:
+    sys.path.remove(str(_ROOT))
+sys.path.insert(0, str(_ROOT))
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -109,6 +119,37 @@ class RunRow(TypedDict):
     evaluations: int
     final_unique: int
     elapsed_s: float
+
+
+class SummaryRow(TypedDict):
+    """Linha da tabela agregada (terminal e CSV)."""
+
+    size: int
+    population: int
+    algorithm: str
+    subsets: int
+    runs: int
+    fitness_mean: float
+    fitness_std: float
+    gap_ref: float
+    generation_mean: float
+    elapsed_mean: float
+    delta_pct_vs_baseline: float
+
+
+SUMMARY_COLUMNS = (
+    "size",
+    "population",
+    "algorithm",
+    "subsets",
+    "runs",
+    "fitness_mean",
+    "fitness_std",
+    "gap_ref",
+    "generation_mean",
+    "elapsed_mean",
+    "delta_pct_vs_baseline",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +304,6 @@ def _build_tasks(
     sigma: np.ndarray,
     universes: dict[int, list[tuple[int, ...]]],
     *,
-    algorithms: list[str],
     populations: list[int],
     runs: int,
     generations: int,
@@ -280,7 +320,7 @@ def _build_tasks(
             subset_sigma = sigma[np.ix_(indices, indices)].copy()
 
             for population in populations:
-                for algorithm in algorithms:
+                for algorithm in ("baseline", "ours"):
                     for run in range(runs):
                         tasks.append(
                             RunSpec(
@@ -391,78 +431,122 @@ def _subset_stats(
     }
 
 
-def _print_table(
+def _summary_rows(
     rows: list[RunRow],
     sizes: list[int],
     populations: list[int],
     references: dict[int, float],
-) -> None:
+) -> list[SummaryRow]:
+    """Agrega as execuções no formato das Tabelas I/II.
+
+    A média é a média das médias por subset (o paper reporta assim); o desvio é
+    a média dos desvios por subset. ``delta_pct_vs_baseline`` só existe na
+    linha do ``ours``.
+    """
+
+    summary: list[SummaryRow] = []
+
     for size in sizes:
         for population in populations:
-            print()
-            print(
-                sepComment(
-                    40,
-                    stylePrint(
-                        f"S={size} · pop={population} · {len(rows)} execuções",
-                        C,
-                        bold=True,
-                    ),
-                )
-            )
-
-            header = (
-                f"{'algoritmo':<10} {'fitness':>10} {'std':>10} "
-                f"{'gap_ref':>10} {'gen méd':>8} {'tempo/run':>10}"
-            )
-            print(f"  {stylePrint(header, C, bold=True)}")
-
             means: dict[str, float] = {}
+            block: list[SummaryRow] = []
 
             for algorithm in ("baseline", "ours"):
                 stats = _subset_stats(rows, size, population, algorithm)
                 if not stats:
                     continue
 
-                subset_means = [mean for mean, _ in stats.values()]
-                subset_stds = [std for _, std in stats.values()]
-                average = statistics.fmean(subset_means)
-                spread = statistics.fmean(subset_stds)
+                average = statistics.fmean(mean for mean, _ in stats.values())
+                spread = statistics.fmean(std for _, std in stats.values())
                 means[algorithm] = average
 
-                reference = references.get(size, float("nan"))
-                gap = reference - average
-
-                generation = statistics.fmean(
-                    row["best_generation"]
+                selected = [
+                    row
                     for row in rows
-                    if int(row["size"]) == size
+                    if row["size"] == size
                     and row["population"] == population
                     and row["algorithm"] == algorithm
-                )
-                seconds = statistics.fmean(
-                    row["elapsed_s"]
-                    for row in rows
-                    if int(row["size"]) == size
-                    and row["population"] == population
-                    and row["algorithm"] == algorithm
-                )
+                ]
 
-                print(
-                    f"  {algorithm:<10} "
-                    f"{formatValue(average * 100):>10} "
-                    f"{formatValue(spread * 100):>10} "
-                    f"{formatValue(gap * 100):>10} "
-                    f"{generation:>8.1f} "
-                    f"{seconds:>9.1f}s"
+                block.append(
+                    SummaryRow(
+                        size=size,
+                        population=population,
+                        algorithm=algorithm,
+                        subsets=len(stats),
+                        runs=len(selected),
+                        fitness_mean=average,
+                        fitness_std=spread,
+                        gap_ref=references.get(size, float("nan")) - average,
+                        generation_mean=statistics.fmean(
+                            row["best_generation"] for row in selected
+                        ),
+                        elapsed_mean=statistics.fmean(
+                            row["elapsed_s"] for row in selected
+                        ),
+                        delta_pct_vs_baseline=float("nan"),
+                    )
                 )
 
             if "baseline" in means and "ours" in means and means["baseline"]:
-                delta = (means["ours"] - means["baseline"]) / means["baseline"] * 100
-                print(
-                    f"  {stylePrint('Δ% ours vs baseline', C)}: "
-                    f"{delta:+.2f}%"
+                delta = (
+                    (means["ours"] - means["baseline"]) / means["baseline"] * 100.0
                 )
+                for row in block:
+                    if row["algorithm"] == "ours":
+                        row["delta_pct_vs_baseline"] = delta
+
+            summary.extend(block)
+
+    return summary
+
+
+def _print_table(summary: list[SummaryRow]) -> None:
+    header = (
+        f"{'algoritmo':<10} {'fitness':>10} {'std':>10} "
+        f"{'gap_ref':>10} {'gen méd':>8} {'tempo/run':>10}"
+    )
+
+    current: tuple[int, int] | None = None
+
+    for row in summary:
+        key = (row["size"], row["population"])
+        if key != current:
+            current = key
+            group = [
+                item
+                for item in summary
+                if (item["size"], item["population"]) == key
+            ]
+            runs = sum(item["runs"] for item in group)
+            print()
+            print(
+                sepComment(
+                    40,
+                    stylePrint(
+                        f"S={row['size']} · pop={row['population']} · "
+                        f"{runs} execuções",
+                        C,
+                        bold=True,
+                    ),
+                )
+            )
+            print(f"  {stylePrint(header, C, bold=True)}")
+
+        print(
+            f"  {row['algorithm']:<10} "
+            f"{formatValue(row['fitness_mean'] * 100):>10} "
+            f"{formatValue(row['fitness_std'] * 100):>10} "
+            f"{formatValue(row['gap_ref'] * 100):>10} "
+            f"{row['generation_mean']:>8.1f} "
+            f"{row['elapsed_mean']:>9.1f}s"
+        )
+
+        if not math.isnan(row["delta_pct_vs_baseline"]):
+            print(
+                f"  {stylePrint('Δ% ours vs baseline', C)}: "
+                f"{row['delta_pct_vs_baseline']:+.2f}%"
+            )
 
     print()
     print(
@@ -473,6 +557,28 @@ def _print_table(
         f"  {stylePrint('nota', C)}: 'gap_ref' usa busca local multi-start; "
         "não é o ótimo global."
     )
+
+
+def _write_summary_csv(summary: list[SummaryRow], path: Path) -> Path:
+    """Grava a tabela agregada (valores crus, sem o ×100 da tela)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames: list[str] = list(SUMMARY_COLUMNS)
+
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for row in summary:
+            payload: dict[str, object] = {
+                column: row[column] for column in SUMMARY_COLUMNS
+            }
+            if math.isnan(row["delta_pct_vs_baseline"]):
+                payload["delta_pct_vs_baseline"] = ""
+            writer.writerow(payload)
+
+    return path
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -489,12 +595,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--generations", type=int, default=20)
     parser.add_argument(
-        "--algorithms",
-        nargs="+",
-        choices=("baseline", "ours"),
-        default=["baseline", "ours"],
-    )
-    parser.add_argument(
         "--universe",
         choices=("sp500", "default"),
         default="sp500",
@@ -505,7 +605,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=_ROOT / "outputs" / "paper_tables",
+        default=_ROOT / "outputs" / "eaqga",
     )
     parser.add_argument(
         "--backend",
@@ -523,6 +623,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--timings",
         action="store_true",
         help="imprime o tempo de cada fase (dados, referência, 1º resultado).",
+    )
+    parser.add_argument(
+        "--save-table",
+        action="store_true",
+        help="grava a tabela agregada em summary-<timestamp>.csv.",
     )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument(
@@ -557,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
     timings: dict[str, float] = {}
     clock = time.perf_counter()
 
-    print(sepComment(40, stylePrint("paper_tables", C, bold=True)))
+    print(sepComment(40, stylePrint("EAQGA", C, bold=True)))
     print(f"  {stylePrint('• universo', C)}: {len(symbols)} tickers ({args.universe})")
     print(f"  {stylePrint('• período', C)}: {PAPER_START}..{PAPER_END}")
 
@@ -637,7 +742,6 @@ def main(argv: list[str] | None = None) -> int:
         data.mu,
         data.sigma,
         universes,
-        algorithms=args.algorithms,
         populations=args.population,
         runs=args.runs,
         generations=args.generations,
@@ -670,7 +774,15 @@ def main(argv: list[str] | None = None) -> int:
         timings=timings,
     )
 
-    _print_table(rows, args.sizes, args.population, references)
+    summary = _summary_rows(rows, args.sizes, args.population, references)
+    _print_table(summary)
+
+    if args.save_table:
+        table_path = _write_summary_csv(
+            summary,
+            args.output / f"summary-{stamp}.csv",
+        )
+        print(f"\n  {stylePrint('tabela.csv', C)}: {table_path}")
 
     if args.timings:
         print()
