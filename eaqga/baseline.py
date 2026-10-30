@@ -48,6 +48,11 @@ from .crossover import (
 )
 from .fitness import Evaluation, evaluate_counts
 from .instance import QUBOInstance
+from .utils.prints import (
+    GENERATION_HEADER,
+    format_generation_line,
+    make_generation_bars,
+)
 
 __all__ = [
     "BaselineIndividual",
@@ -352,8 +357,14 @@ def _measure_circuit(
 def run_baseline(
     instance: QUBOInstance,
     config: BaselineConfig,
+    *,
+    progress: bool = False,
+    reference: float | None = None,
 ) -> BaselineResult:
     """Executa o baseline completo e devolve histórico e melhor indivíduo.
+
+    ``progress=True`` imprime uma linha por geração (mesmo formato do híbrido).
+    Só faz sentido em processo único. ``reference`` é o alvo da barra de fitness.
 
     O representante de cada circuito é o melhor shot. Com ``shots=1`` (default
     do paper), isso é simplesmente o único bitstring medido. Com ``shots>1``,
@@ -369,6 +380,21 @@ def run_baseline(
         raise TypeError(
             f"config deve ser BaselineConfig, recebeu {type(config).__name__}."
         )
+    if not isinstance(progress, bool):
+        raise TypeError(
+            f"progress deve ser bool, recebeu {type(progress).__name__}."
+        )
+    if reference is not None and (
+        isinstance(reference, bool) or not isinstance(reference, (int, float))
+    ):
+        raise TypeError(
+            "reference deve ser float ou None, recebeu "
+            f"{type(reference).__name__}."
+        )
+
+    target = float(reference) if reference is not None else None
+    if target is not None and not math.isfinite(target):
+        raise ValueError(f"reference deve ser finito, recebeu {reference}.")
 
     simulator = _make_simulator(config)
     rng = random.Random(config.seed)
@@ -413,6 +439,25 @@ def run_baseline(
 
     pool = _top_two(initial_population)
     population = initial_population
+
+    bars = make_generation_bars() if progress else None
+
+    if bars is not None:
+        print(GENERATION_HEADER, flush=True)
+        print(
+            format_generation_line(
+                generation=0,
+                generations=config.generations,
+                elapsed=time.perf_counter() - start,
+                best=initial_best.fitness,
+                average=statistics.fmean(initial_values),
+                unique=len({ind.bits for ind in initial_population}),
+                generation_bar=bars[0],
+                fitness_bar=bars[1],
+                reference=target,
+            ),
+            flush=True,
+        )
 
     for generation in range(1, config.generations + 1):
         first, second = pool
@@ -470,6 +515,22 @@ def run_baseline(
             if current_best.forest is not None
             else None
         )
+
+        if bars is not None:
+            print(
+                format_generation_line(
+                    generation=generation,
+                    generations=config.generations,
+                    elapsed=time.perf_counter() - start,
+                    best=best_so_far.fitness,
+                    average=statistics.fmean(values),
+                    unique=len({ind.bits for ind in population}),
+                    generation_bar=bars[0],
+                    fitness_bar=bars[1],
+                    reference=target,
+                ),
+                flush=True,
+            )
 
         next_pool = _top_two(population)
         pool = (
