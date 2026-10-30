@@ -89,6 +89,36 @@ com `use_gpu: bool` no config, um simulador por worker (nunca por circuito) e
 paridade de fitness CPU × GPU no mesmo seed. Para `S ≥ 28` a GPU statevector
 continua inviável em 4 GB; o caminho realista é MPS (CPU) ou batching.
 
+## 3.1 Onde o tempo vai antes do primeiro resultado
+
+O cabeçalho do `paper_tables` sai quase instantâneo; o primeiro resultado não.
+Medido com `--timings` (16 cores, `S=30`):
+
+| fase | tempo |
+|---|---:|
+| carregar preços do cache + `μ`/`Σ` | 0.13 s |
+| busca local de referência | 0.02 s |
+| **primeiro resultado** (após `tarefas`) | **2.55 s** |
+| execução das 8 tarefas | 4.90 s |
+
+O intervalo é o `joblib`/loky: criar os workers e **importar `eaqga.runner`
+(→ Qiskit/Aer) em cada processo** custa ~0.95 s por worker, em paralelo. Com 4
+workers, o dispatch puro leva ~1.1 s; o resto é a primeira tarefa.
+
+Alternativas testadas:
+
+| backend | 1º resultado | 8 tarefas |
+|---|---:|---:|
+| `loky` (processos) | 2.55 s | 4.90 s |
+| `threading` | **9.96 s** | **21.6 s** |
+
+`threading` é **4× pior**: a construção do circuito e o wrapper do Aer seguram o
+GIL, e cada simulador abre o próprio pool OpenMP (oversubscription). Fica
+`loky`.
+
+Mitigações aplicadas: linha `• workers` antes do dispatch (explica a espera),
+`--timings` para medir, e `--jobs 1` para ver a barra por geração sem spawn.
+
 ## 4. O que medimos aqui
 
 `experiments/paper_tables.py`, 16 cores, 23 GB:
