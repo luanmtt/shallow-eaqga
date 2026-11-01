@@ -94,7 +94,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     Endpoint(
         path="eaqga.py",
-        summary="Experimento principal: runs.csv + tabela comparativa (Tabelas I/II).",
+        summary="Experimento principal: baseline × ours × original, com CSV.",
         command=".venv/bin/python eaqga.py --quick",
         flags=(
             Flag("--quick", "smoke: S=10, 2 subsets, 2 runs, 3 gerações, pop 5."),
@@ -103,7 +103,8 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--subsets N", "subconjuntos disjuntos por tamanho (default: 10)."),
             Flag("--runs N", "execuções por subset (default: 100)."),
             Flag("--generations N", "T_max, gerações por execução (default: 20)."),
-            Flag("--algorithms {baseline,ours}", "quais rodam (default: os dois)."),
+            Flag("--algorithms {baseline,ours,original}", "quais rodam (default: os três)."),
+            Flag("--original-runs N", "execuções do original por subset (default: 5)."),
             Flag("--universe {sp500,default}", "universo (default: sp500)."),
             Flag("--jobs N", "workers do joblib (default: min(8, cpus))."),
             Flag("--backend {loky,threading}", "loky isola processos; threading é ~4× pior."),
@@ -114,7 +115,10 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--seed N", "semente dos subsets e das runs (default: 0)."),
             Flag("--output PATH", "diretório de saída (default: outputs/eaqga)."),
         ),
-        note="a tabela sempre compara baseline × ours, mesmo com --algorithms.",
+        note=(
+            "a tabela sempre compara com o baseline; o original usa 1024 shots "
+            "por circuito e é ~40× mais lento — limite-o com --original-runs."
+        ),
     ),
     Endpoint(
         path="docs/glossary.py",
@@ -136,6 +140,8 @@ LIBRARY = (
     ("eaqga/baseline.py", "EAQGA fiel, run_baseline()"),
     ("eaqga/crossover.py", "pares P/N, floresta, agendamento"),
     ("eaqga/config.py", "HybridConfig / BaselineConfig"),
+    ("eaqga/original_adapter.py", "roda o motor de original/ no QUBO"),
+    ("original/src/", "QGA antigo vendorizado, sem edição"),
 )
 
 _SETUP = (
