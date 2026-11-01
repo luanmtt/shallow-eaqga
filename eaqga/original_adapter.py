@@ -50,6 +50,7 @@ _ORIGINAL_SRC = _ORIGINAL_ROOT / "src"
 
 _ENGINE: ModuleType | None = None
 _INDIVIDUO: ModuleType | None = None
+_PRISTINE_CALCULAR = None
 
 
 def load_engine() -> tuple[ModuleType, ModuleType]:
@@ -80,6 +81,9 @@ def load_engine() -> tuple[ModuleType, ModuleType]:
     # chega na classe usada pelo motor.
     individuo_module = importlib.import_module("src.Individuo")
     engine_module = importlib.import_module("ParallelQuantumGA")
+
+    global _PRISTINE_CALCULAR
+    _PRISTINE_CALCULAR = individuo_module.Individuo.calcular_fitness
 
     _INDIVIDUO = individuo_module
     _ENGINE = engine_module
@@ -137,6 +141,7 @@ def run_original(
     seed: int,
     num_portas: int = 6,
     door_type: int = 2,
+    shots: int | None = None,
     backend: BackendKind = BackendKind.MPS,
     elite_size: float = 0.2,
     crossover_rate: float = 0.7,
@@ -149,6 +154,10 @@ def run_original(
     (``qga.py``): Hilbert, 6 camadas. ``n_jobs`` fica em 1 de propósito: o
     experimento já paraleliza por execução, e o motor original serializa o
     ``self`` inteiro no joblib quando ``n_jobs > 1``.
+
+    ``shots=None`` mantém o default do original (1024 por circuito). Um inteiro
+    troca **só** o número de shots, via wrapper do método ``calcular_fitness``;
+    a lógica de avaliação continua a mesma.
     """
 
     if not isinstance(instance, QUBOInstance):
@@ -169,12 +178,32 @@ def run_original(
         )
     if tournament_size > population_size:
         tournament_size = max(1, population_size)
+    if shots is not None and (isinstance(shots, bool) or shots < 1):
+        raise ValueError("shots deve ser int >= 1 ou None.")
 
     engine_module, individuo_module = load_engine()
 
     # N_QUBITS é global do módulo; 1 qubit por variável = modo binário.
     setattr(individuo_module, "N_QUBITS", 1)
     setattr(individuo_module, "AerSimulator", _make_simulator(backend))
+
+    base_calcular = _PRISTINE_CALCULAR
+    if base_calcular is None:  # pragma: no cover - load_engine sempre define
+        raise RuntimeError("motor original não carregado corretamente.")
+
+    if shots is None:
+        setattr(individuo_module.Individuo, "calcular_fitness", base_calcular)
+    else:
+        def calcular(self, fitness_function, shots=shots, dataCollection=False, exact=False):
+            return base_calcular(
+                self,
+                fitness_function,
+                shots=shots,
+                dataCollection=dataCollection,
+                exact=exact,
+            )
+
+        setattr(individuo_module.Individuo, "calcular_fitness", calcular)
 
     size = instance.S
 
