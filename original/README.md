@@ -7,13 +7,20 @@ Cópia **byte-idêntica** dos arquivos do repositório `~/projects/qga` (commit
 |---|---|
 | `src/Individuo.py` | `quantum/src/Individuo.py` |
 | `src/ParallelQuantumGA.py` | `quantum/src/ParallelQuantumGA.py` |
-| `src/benchmark_functions.py` | `quantum/src/benchmark_functions.py` |
 | `src/config.py` | `quantum/src/config.py` |
 | `src/metrics.py` | `quantum/src/metrics.py` |
 | `utils/*` | `utils/*` |
 
 Nada aqui é editado. Se precisar mudar comportamento, mude o adapter
 (`eaqga/original_adapter.py`) ou copie de novo.
+
+## O que ficou de fora
+
+- `benchmark_functions.py`: ninguém no motor importa — só o `qga.py` antigo
+  usava. Como o nosso problema é o QUBO (domínio `(0,1)`, 1 qubit por
+  variável), a função de fitness vem de `QUBOInstance`, não de benchmark.
+- `visualization/`, `notebooks/`, `scripts/`, `qga.py`: são a casca do CLI
+  antigo, não o motor.
 
 ## Por que `utils/` veio junto
 
