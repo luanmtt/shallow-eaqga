@@ -97,15 +97,17 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         summary="Experimento principal: baseline × ours × original, com CSV.",
         command=".venv/bin/python eaqga.py --quick",
         flags=(
+            Flag("--preset {default,paper}", "paper = protocolo do artigo; default = comparativo usual."),
             Flag("--quick", "smoke: S=10, 2 subsets, 2 runs, 3 gerações, pop 5."),
-            Flag("--sizes N [N ...]", "tamanhos do problema (default: 30 40)."),
-            Flag("--population N [N ...]", "tamanhos de população (default: 20)."),
-            Flag("--subsets N", "subconjuntos disjuntos por tamanho (default: 10)."),
-            Flag("--runs N", "execuções por subset (default: 100)."),
-            Flag("--generations N", "T_max, gerações por execução (default: 20)."),
+            Flag("--sizes N [N ...]", "tamanhos (paper: 30 40)."),
+            Flag("--population N [N ...]", "populações (paper: 10 20; default: 20)."),
+            Flag("--subsets N", "subconjuntos disjuntos por tamanho (10)."),
+            Flag("--runs N", "execuções por subset (paper: 100)."),
+            Flag("--generations N", "T_max, gerações (paper: 20)."),
             Flag("--algorithms {baseline,ours,original}", "quais rodam (default: os três)."),
-            Flag("--original-runs N", "execuções do original por subset (default: 5)."),
-            Flag("--universe {sp500,default}", "universo (default: sp500)."),
+            Flag("--original-runs N", "runs do original (paper: 100; default: 5)."),
+            Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
+            Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),
             Flag("--jobs N", "workers do joblib (default: min(8, cpus))."),
             Flag("--backend {loky,threading}", "loky isola processos; threading é ~4× pior."),
             Flag("--progress / --no-progress", "barra por geração (auto: só com --jobs 1)."),
@@ -116,8 +118,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--output PATH", "diretório de saída (default: outputs/eaqga)."),
         ),
         note=(
-            "a tabela sempre compara com o baseline; o original usa 1024 shots "
-            "por circuito e é ~40× mais lento — limite-o com --original-runs."
+            "paper: 1 shot por circuito, p_a=0.95, p_s=0.6, T=20, 10 subsets, "
+            "100 runs, S&P 500 de 2024-09-30. O original é ~40× mais lento; "
+            "limite-o com --original-runs."
         ),
     ),
     Endpoint(
@@ -133,6 +136,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 
 LIBRARY = (
     ("eaqga/portfolio.py", "preços, μ/Σ, QUBO; cache em data/prices/"),
+    ("eaqga/b3.py", "draft B3/Ibovespa via yfinance (.SA)"),
     ("eaqga/instance.py", "QUBOInstance, fitness, brute force"),
     ("eaqga/individuo.py", "genoma 1Q, circuito, medição"),
     ("eaqga/population.py", "ranking, top-2, crossover/mutação, métricas"),
