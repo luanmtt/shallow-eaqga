@@ -618,6 +618,10 @@ def _print_table(summary: list[SummaryRow]) -> None:
         f"  {stylePrint('nota', C)}: 'gap_ref' usa busca local multi-start; "
         "não é o ótimo global."
     )
+    print(
+        f"  {stylePrint('nota', C)}: shots por circuito: baseline 1, "
+        "ours 50, original 1024 (nativo)."
+    )
 
 
 def _write_summary_csv(summary: list[SummaryRow], path: Path) -> Path:
