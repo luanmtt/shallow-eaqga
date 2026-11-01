@@ -242,6 +242,6 @@ def run_original(
         best_generation=max(0, int(best_generation)),
         history={"best": [float(value) for value in history]},
         final_population=final_population,
-        evaluations=population_size * generations,
+        evaluations=population_size * (generations + 1),
         elapsed_s=elapsed,
     )
