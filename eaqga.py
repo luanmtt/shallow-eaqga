@@ -27,10 +27,19 @@ para não exagerar em `--jobs`.
 GPU (`statevector_gpu`) fica para depois: os benchmarks antigos deram 1.79× em
 16 qubits e 0.98× em 24. Ver `docs/04-aer-memoria-e-gpu.md`.
 
+Dois presets:
+
+- ``default``: comparativo usual (híbrido com ``k=50``, original com 1024
+  shots, S&P 500 atual, 30/40 ativos);
+- ``paper``: protocolo do artigo — S&P 500 **de 2024-09-30** (constituintes da
+  época, via revisão da Wikipedia), 1 shot por circuito, ``N ∈ {10, 20}``,
+  ``T = 20``, 10 subsets, 100 runs, ``p_a = 0.95``, ``p_s = 0.6``.
+
 Uso:
     python eaqga.py --quick
-    python eaqga.py --sizes 30 --population 20 --runs 100
-    python eaqga.py --sizes 30 40 --population 10 20 --save-table
+    python eaqga.py --preset paper --quick
+    python eaqga.py --preset paper
+    python eaqga.py --sizes 30 --population 20 --runs 100 --save-table
 """
 
 from __future__ import annotations
@@ -61,6 +70,7 @@ sys.path.insert(0, str(_ROOT))
 import numpy as np
 from joblib import Parallel, delayed
 
+from eaqga.b3 import build_b3_portfolio
 from eaqga.baseline import run_baseline
 from eaqga.config import (
     BackendKind,
@@ -140,6 +150,86 @@ class SummaryRow(TypedDict):
 
 ALGORITHMS = ("baseline", "ours", "original")
 
+
+@dataclass(frozen=True, slots=True)
+class Protocol:
+    """Parâmetros compartilhados pelos três algoritmos numa execução."""
+
+    p_a: float
+    p_s: float
+    num_columns: int
+    mutation_rate: float
+    original_portas: int
+    original_door_type: int
+    original_elite: float
+    original_crossover: float
+    original_mutation: float
+
+
+@dataclass(frozen=True, slots=True)
+class Preset:
+    """Configuração pré-pronta do experimento.
+
+    ``paper`` reproduz o protocolo do artigo (período, universo da época, N, T,
+    subsets, runs, ``p_a``, ``p_s``, ``q`` e 1 shot por circuito). ``default`` é
+    o nosso comparativo usual (``k=50`` no híbrido, 1024 shots no original,
+    universo atual).
+    """
+
+    name: str
+    sizes: tuple[int, ...]
+    populations: tuple[int, ...]
+    subsets: int
+    runs: int
+    generations: int
+    universe: str
+    as_of: str | None
+    original_runs: int
+    shots: dict[str, int]
+    protocol: Protocol
+
+
+_PAPER_PROTOCOL = Protocol(
+    p_a=0.95,          # paper: probabilidade de reproduzir o bit do melhor pai
+    p_s=0.60,          # paper: probabilidade de selecionar um par
+    num_columns=2,     # nosso indivíduo (não vem do paper)
+    mutation_rate=0.10,  # nosso indivíduo (não vem do paper)
+    original_portas=6,   # default do repositório original (qga.py)
+    original_door_type=2,  # Hilbert
+    original_elite=0.20,
+    original_crossover=0.70,
+    original_mutation=0.30,
+)
+
+PRESETS: dict[str, Preset] = {
+    "default": Preset(
+        name="default",
+        sizes=(30, 40),
+        populations=(20,),
+        subsets=10,
+        runs=100,
+        generations=20,
+        universe="sp500",
+        as_of=None,
+        original_runs=5,
+        shots={"baseline": 1, "ours": 50, "original": 1024},
+        protocol=_PAPER_PROTOCOL,
+    ),
+    "paper": Preset(
+        name="paper",
+        sizes=(30, 40),
+        populations=(10, 20),
+        subsets=10,
+        runs=100,
+        generations=20,
+        universe="sp500",
+        as_of="2024-09-30",
+        original_runs=100,
+        shots={"baseline": 1, "ours": 1, "original": 1},
+        protocol=_PAPER_PROTOCOL,
+    ),
+}
+
 SUMMARY_COLUMNS = (
     "size",
     "population",
@@ -169,6 +259,7 @@ class RunSpec:
     seed: int
     mu: np.ndarray
     sigma: np.ndarray
+    protocol: Protocol
     progress: bool = False
     reference: float | None = None
 
@@ -191,12 +282,18 @@ def _run_one(spec: RunSpec) -> RunRow:
             population_size=spec.population,
             generations=spec.generations,
             seed=spec.seed,
+            shots=spec.shots,
+            num_portas=spec.protocol.original_portas,
+            door_type=spec.protocol.original_door_type,
+            elite_size=spec.protocol.original_elite,
+            crossover_rate=spec.protocol.original_crossover,
+            mutation_rate=spec.protocol.original_mutation,
         )
         row: RunRow = {
             "size": spec.size,
             "population": spec.population,
             "generations": spec.generations,
-            "shots": 1024,
+            "shots": spec.shots,
             "algorithm": spec.algorithm,
             "subset": spec.subset,
             "run": spec.run,
@@ -215,8 +312,8 @@ def _run_one(spec: RunSpec) -> RunRow:
             population_size=spec.population,
             generations=spec.generations,
             shots=spec.shots,
-            p_a=0.95,
-            p_s=0.6,
+            p_a=spec.protocol.p_a,
+            p_s=spec.protocol.p_s,
             forest_shape=ForestShape.STAR,
             max_degree=None,
             paper_x_rule=False,
@@ -235,12 +332,12 @@ def _run_one(spec: RunSpec) -> RunRow:
             population_size=spec.population,
             generations=spec.generations,
             shots=spec.shots,
-            num_columns=2,
+            num_columns=spec.protocol.num_columns,
             gate_set=GateSet.HILBERT_1Q,
             forest_shape=ForestShape.PATH,
             max_degree=2,
-            mutation_rate=0.1,
-            p_s=0.6,
+            mutation_rate=spec.protocol.mutation_rate,
+            p_s=spec.protocol.p_s,
             seed=spec.seed,
             backend=BackendKind.MPS,
             verbose=False,
@@ -339,6 +436,7 @@ def _build_tasks(
     generations: int,
     shots: dict[str, int],
     seed: int,
+    protocol: Protocol,
     references: dict[int, float] | None = None,
     progress: bool = False,
 ) -> list[RunSpec]:
@@ -365,6 +463,7 @@ def _build_tasks(
                                 seed=seed + 10_000 * subset_index + run,
                                 mu=subset_mu,
                                 sigma=subset_sigma,
+                                protocol=protocol,
                                 progress=progress,
                                 reference=(references or {}).get(size),
                             )
@@ -534,7 +633,7 @@ def _summary_rows(
     return summary
 
 
-def _print_table(summary: list[SummaryRow]) -> None:
+def _print_table(summary: list[SummaryRow], shots: dict[str, int]) -> None:
     """Imprime as duas linhas sempre; algoritmos ausentes viram ``—``.
 
     A comparação é o produto do script, então a tabela não muda de forma
@@ -619,8 +718,9 @@ def _print_table(summary: list[SummaryRow]) -> None:
         "não é o ótimo global."
     )
     print(
-        f"  {stylePrint('nota', C)}: shots por circuito: baseline 1, "
-        "ours 50, original 1024 (nativo)."
+        f"  {stylePrint('nota', C)}: shots por circuito: "
+        + ", ".join(f"{name} {count}" for name, count in shots.items())
+        + "."
     )
 
 
@@ -652,13 +752,19 @@ def _write_summary_csv(summary: list[SummaryRow], path: Path) -> Path:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Reproduz as Tabelas I/II do EAQGA com dados reais.",
+        description="Compara EAQGA fiel, híbrido e QGA original no portfólio.",
     )
-    parser.add_argument("--sizes", nargs="+", type=int, default=[30, 40])
-    parser.add_argument("--population", nargs="+", type=int, default=[20])
-    parser.add_argument("--subsets", type=int, default=10)
-    parser.add_argument("--runs", type=int, default=100)
-    parser.add_argument("--generations", type=int, default=20)
+    parser.add_argument(
+        "--preset",
+        choices=tuple(PRESETS),
+        default="default",
+        help="'paper' fixa o protocolo do artigo; 'default' é o comparativo usual.",
+    )
+    parser.add_argument("--sizes", nargs="+", type=int, default=None)
+    parser.add_argument("--population", nargs="+", type=int, default=None)
+    parser.add_argument("--subsets", type=int, default=None)
+    parser.add_argument("--runs", type=int, default=None)
+    parser.add_argument("--generations", type=int, default=None)
     parser.add_argument(
         "--algorithms",
         nargs="+",
@@ -669,14 +775,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--original-runs",
         type=int,
-        default=5,
-        help="execuções do original por subset (ele é ~40x mais lento).",
+        default=None,
+        help="execuções do original por subset (default do preset).",
     )
     parser.add_argument(
         "--universe",
-        choices=("sp500", "default"),
-        default="sp500",
-        help="'sp500' baixa/carrega o índice; 'default' usa 30 large caps.",
+        choices=("sp500", "b3", "default"),
+        default=None,
+        help="'sp500', 'b3' (draft) ou 'default' (30 large caps).",
+    )
+    parser.add_argument(
+        "--as-of",
+        default=None,
+        help="data dos constituintes do S&P 500 (default do preset).",
     )
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--seed", type=int, default=0)
@@ -718,6 +829,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    preset = PRESETS[args.preset]
+
+    # Preset preenche o que não foi passado na linha de comando.
+    args.sizes = args.sizes or list(preset.sizes)
+    args.population = args.population or list(preset.populations)
+    args.subsets = args.subsets if args.subsets is not None else preset.subsets
+    args.runs = args.runs if args.runs is not None else preset.runs
+    args.generations = args.generations if args.generations is not None else preset.generations
+    args.original_runs = (
+        args.original_runs if args.original_runs is not None else preset.original_runs
+    )
+    args.universe = args.universe or preset.universe
+    args.as_of = args.as_of if args.as_of is not None else preset.as_of
 
     if args.quick:
         args.sizes = [10]
@@ -725,36 +849,63 @@ def main(argv: list[str] | None = None) -> int:
         args.runs = 2
         args.generations = 3
         args.population = [5]
-        args.universe = "default"
+        args.original_runs = 1
+        if preset.name != "paper":
+            # smoke offline: 30 large caps em cache
+            args.universe = "default"
+            args.as_of = None
 
     if args.jobs < 1 and args.jobs != -1:
         raise SystemExit("--jobs deve ser >= 1 ou -1.")
-
-    if args.universe == "sp500":
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            symbols = fetch_sp500_tickers(refresh=args.refresh)
-    else:
-        symbols = DEFAULT_UNIVERSE
+    if args.original_runs < 1:
+        raise SystemExit("--original-runs deve ser >= 1.")
+    if args.as_of is not None and args.universe != "sp500":
+        raise SystemExit("--as-of só faz sentido com --universe sp500.")
 
     timings: dict[str, float] = {}
     clock = time.perf_counter()
 
     print(sepComment(40, stylePrint("EAQGA", C, bold=True)))
-    print(f"  {stylePrint('• universo', C)}: {len(symbols)} tickers ({args.universe})")
+    print(f"  {stylePrint('• preset', C)}: {preset.name}")
+    print(
+        f"  {stylePrint('• grade', C)}: S={', '.join(map(str, args.sizes))} · "
+        f"pop={', '.join(map(str, args.population))} · "
+        f"{args.subsets} subsets × {args.runs} runs · T={args.generations} · "
+        f"original {args.original_runs} runs"
+    )
     print(f"  {stylePrint('• período', C)}: {PAPER_START}..{PAPER_END}")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        data = build_portfolio(
-            symbols,
-            PAPER_START,
-            PAPER_END,
-            refresh=args.refresh,
-            strict=False,
-        )
+
+        if args.universe == "b3":
+            data = build_b3_portfolio(
+                refresh=args.refresh,
+                strict=False,
+            )
+            universe_label = "B3 draft"
+        else:
+            symbols = (
+                fetch_sp500_tickers(refresh=args.refresh, as_of=args.as_of)
+                if args.universe == "sp500"
+                else DEFAULT_UNIVERSE
+            )
+            data = build_portfolio(
+                symbols,
+                PAPER_START,
+                PAPER_END,
+                refresh=args.refresh,
+                strict=False,
+            )
+            if args.universe == "default":
+                universe_label = "30 large caps"
+            elif args.as_of:
+                universe_label = f"S&P 500 em {args.as_of}"
+            else:
+                universe_label = "S&P 500 atual"
 
     timings["dados"] = time.perf_counter() - clock
+    print(f"  {stylePrint('• universo', C)}: {data.S} ativos · {universe_label}")
     print(f"  {stylePrint('• dados', C)}: {data.summary()}")
 
     position = {ticker: index for index, ticker in enumerate(data.tickers)}
@@ -786,6 +937,11 @@ def main(argv: list[str] | None = None) -> int:
         f"  {stylePrint('• memória', C)}: statevector em S="
         f"{max(args.sizes)} exigiria {_statevector_memory(max(args.sizes))}; "
         "usando MPS."
+    )
+    print(
+        f"  {stylePrint('• protocolo', C)}: p_a={preset.protocol.p_a} · "
+        f"p_s={preset.protocol.p_s} · T={args.generations} · "
+        f"shots={preset.shots}"
     )
 
     clock = time.perf_counter()
@@ -825,8 +981,9 @@ def main(argv: list[str] | None = None) -> int:
         runs=args.runs,
         original_runs=args.original_runs,
         generations=args.generations,
-        shots={"baseline": 1, "ours": 50, "original": 1024},
+        shots=preset.shots,
         seed=args.seed,
+        protocol=preset.protocol,
         references=references,
         progress=show_progress,
     )
@@ -855,7 +1012,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     summary = _summary_rows(rows, args.sizes, args.population, references)
-    _print_table(summary)
+    _print_table(summary, preset.shots)
 
     if args.save_table:
         table_path = _write_summary_csv(
