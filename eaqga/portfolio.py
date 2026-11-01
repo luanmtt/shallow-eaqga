@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import random
 import urllib.error
+import urllib.parse
 import urllib.request
 import warnings
 from collections.abc import Sequence
@@ -511,38 +513,93 @@ def disjoint_universes(
     )
 
 
-def fetch_sp500_tickers(
-    *,
-    refresh: bool = False,
-    directory: str | Path = DEFAULT_CACHE_DIR,
-) -> tuple[str, ...]:
-    """Lista atual do S&P 500 (Wikipedia), cacheada em CSV.
+def _wikipedia_html(title: str, as_of: str | None) -> str:
+    """HTML da página; com ``as_of``, a revisão mais recente até aquela data."""
 
-    Requer ``lxml`` para o ``pandas.read_html``. O universo do paper é o S&P 500
-    da época (2023-2024); esta lista é a de hoje, então não reproduz exatamente
-    os mesmos subconjuntos.
-    """
+    if as_of is None:
+        url = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_"))
+    else:
+        api = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+            {
+                "action": "query",
+                "prop": "revisions",
+                "titles": title,
+                "rvstart": f"{as_of}T23:59:59Z",
+                "rvlimit": 1,
+                "rvdir": "older",
+                "rvprop": "ids|timestamp",
+                "format": "json",
+            }
+        )
 
-    if not isinstance(refresh, bool):
-        raise TypeError(f"refresh deve ser bool, recebeu {type(refresh).__name__}.")
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(api, headers={"User-Agent": "Mozilla/5.0 (eaqga)"}),
+                timeout=30,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"não foi possível consultar a revisão de {as_of} na Wikipedia."
+            ) from exc
 
-    path = Path(directory) / "sp500_tickers.csv"
+        pages = payload.get("query", {}).get("pages", {})
+        page = next(iter(pages.values()), {})
+        revisions = page.get("revisions") or []
+        if not revisions:
+            raise RuntimeError(
+                f"sem revisão de {title!r} até {as_of}."
+            )
 
-    if path.exists() and not refresh:
-        frame = pd.read_csv(path)
-        return tuple(str(item) for item in frame["ticker"])
+        url = (
+            "https://en.wikipedia.org/w/index.php?oldid="
+            f"{revisions[0]['revid']}"
+        )
 
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (eaqga)"})
 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            html = response.read().decode("utf-8")
+            return response.read().decode("utf-8")
     except urllib.error.URLError as exc:
         raise RuntimeError(
             "não foi possível baixar a lista do S&P 500; passe os tickers "
             "manualmente ou tente de novo."
         ) from exc
+
+
+def fetch_sp500_tickers(
+    *,
+    refresh: bool = False,
+    directory: str | Path = DEFAULT_CACHE_DIR,
+    as_of: str | None = None,
+) -> tuple[str, ...]:
+    """Lista do S&P 500 na data ``as_of`` (ou a atual), cacheada em CSV.
+
+    ``as_of=None`` usa a página de hoje. Com uma data (``YYYY-MM-DD``), busca a
+    revisão da Wikipedia mais recente até aquela data — é o que dá os
+    constituintes **do período do paper** (2023-10-01 a 2024-09-30), sem
+    sobrevivência: empresas que saíram do índice continuam na lista, e as que
+    entraram depois não aparecem.
+
+    Requer ``lxml`` para o ``pandas.read_html``.
+    """
+
+    if not isinstance(refresh, bool):
+        raise TypeError(f"refresh deve ser bool, recebeu {type(refresh).__name__}.")
+    if as_of is not None:
+        _require_dates(as_of, str(pd.Timestamp(as_of) + pd.Timedelta(days=1)))
+
+    directory_path = Path(directory)
+    path = directory_path / (
+        "sp500_tickers.csv" if as_of is None else f"sp500_tickers_{as_of}.csv"
+    )
+
+    if path.exists() and not refresh:
+        frame = pd.read_csv(path)
+        return tuple(str(item) for item in frame["ticker"])
+
+    html = _wikipedia_html("List of S&P 500 companies", as_of)
 
     try:
         tables = pd.read_html(io.StringIO(html))
@@ -552,10 +609,9 @@ def fetch_sp500_tickers(
             "ou passe a lista de tickers manualmente."
         ) from exc
 
-    table = tables[0]
     symbols = [
         str(symbol).strip().replace(".", "-")
-        for symbol in table["Symbol"].tolist()
+        for symbol in tables[0]["Symbol"].tolist()
     ]
 
     path.parent.mkdir(parents=True, exist_ok=True)
