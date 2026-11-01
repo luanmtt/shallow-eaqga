@@ -70,6 +70,7 @@ from eaqga.config import (
     HybridConfig,
 )
 from eaqga.instance import QUBOInstance
+from eaqga.original_adapter import run_original
 from eaqga.portfolio import (
     DEFAULT_UNIVERSE,
     PAPER_END,
@@ -137,6 +138,8 @@ class SummaryRow(TypedDict):
     delta_pct_vs_baseline: float
 
 
+ALGORITHMS = ("baseline", "ours", "original")
+
 SUMMARY_COLUMNS = (
     "size",
     "population",
@@ -181,6 +184,31 @@ def _run_one(spec: RunSpec) -> RunRow:
     )
 
     start = time.perf_counter()
+
+    if spec.algorithm == "original":
+        original = run_original(
+            instance,
+            population_size=spec.population,
+            generations=spec.generations,
+            seed=spec.seed,
+        )
+        row: RunRow = {
+            "size": spec.size,
+            "population": spec.population,
+            "generations": spec.generations,
+            "shots": 1024,
+            "algorithm": spec.algorithm,
+            "subset": spec.subset,
+            "run": spec.run,
+            "seed": spec.seed,
+            "best_bits": original.best_bits,
+            "best_fitness": float(original.best_fitness),
+            "best_generation": int(original.best_generation),
+            "evaluations": int(original.evaluations),
+            "final_unique": len({m.bits for m in original.final_population}),
+            "elapsed_s": original.elapsed_s,
+        }
+        return row
 
     if spec.algorithm == "baseline":
         config = BaselineConfig(
@@ -307,6 +335,7 @@ def _build_tasks(
     algorithms: list[str],
     populations: list[int],
     runs: int,
+    original_runs: int,
     generations: int,
     shots: dict[str, int],
     seed: int,
@@ -322,7 +351,8 @@ def _build_tasks(
 
             for population in populations:
                 for algorithm in algorithms:
-                    for run in range(runs):
+                    limit = min(runs, original_runs) if algorithm == "original" else runs
+                    for run in range(limit):
                         tasks.append(
                             RunSpec(
                                 size=size,
@@ -441,8 +471,8 @@ def _summary_rows(
     """Agrega as execuções no formato das Tabelas I/II.
 
     A média é a média das médias por subset (o paper reporta assim); o desvio é
-    a média dos desvios por subset. ``delta_pct_vs_baseline`` só existe na
-    linha do ``ours``.
+    a média dos desvios por subset. ``delta_pct_vs_baseline`` só existe nas
+    linhas que não são o baseline.
     """
 
     summary: list[SummaryRow] = []
@@ -452,7 +482,7 @@ def _summary_rows(
             means: dict[str, float] = {}
             block: list[SummaryRow] = []
 
-            for algorithm in ("baseline", "ours"):
+            for algorithm in ALGORITHMS:
                 stats = _subset_stats(rows, size, population, algorithm)
                 if not stats:
                     continue
@@ -489,13 +519,15 @@ def _summary_rows(
                     )
                 )
 
-            if "baseline" in means and "ours" in means and means["baseline"]:
-                delta = (
-                    (means["ours"] - means["baseline"]) / means["baseline"] * 100.0
-                )
+            if "baseline" in means and means["baseline"]:
                 for row in block:
-                    if row["algorithm"] == "ours":
-                        row["delta_pct_vs_baseline"] = delta
+                    if row["algorithm"] == "baseline":
+                        continue
+                    row["delta_pct_vs_baseline"] = (
+                        (means[row["algorithm"]] - means["baseline"])
+                        / means["baseline"]
+                        * 100.0
+                    )
 
             summary.extend(block)
 
@@ -512,9 +544,9 @@ def _print_table(summary: list[SummaryRow]) -> None:
 
     header = (
         f"{'algoritmo':<10} {'fitness':>10} {'std':>10} "
-        f"{'gap_ref':>10} {'gen méd':>8} {'tempo/run':>10}"
+        f"{'gap_ref':>10} {'gen méd':>8} {'tempo/run':>10} {'n':>4}"
     )
-    blank = f"  {'—':>10} {'—':>10} {'—':>10} {'—':>8} {'—':>9}"
+    blank = f"  {'—':>10} {'—':>10} {'—':>10} {'—':>8} {'—':>9} {'—':>4}"
 
     lookup = {
         (row["size"], row["population"], row["algorithm"]): row
@@ -525,7 +557,7 @@ def _print_table(summary: list[SummaryRow]) -> None:
     for size, population in groups:
         runs = sum(
             lookup[(size, population, algorithm)]["runs"]
-            for algorithm in ("baseline", "ours")
+            for algorithm in ALGORITHMS
             if (size, population, algorithm) in lookup
         )
 
@@ -542,34 +574,40 @@ def _print_table(summary: list[SummaryRow]) -> None:
         )
         print(f"  {stylePrint(header, C, bold=True)}")
 
-        present: list[str] = []
+        baseline_row = lookup.get((size, population, "baseline"))
 
-        for algorithm in ("baseline", "ours"):
+        for algorithm in ALGORITHMS:
             row = lookup.get((size, population, algorithm))
             if row is None:
                 print(f"  {algorithm:<10}{blank}")
                 continue
 
-            present.append(algorithm)
             print(
                 f"  {algorithm:<10} "
                 f"{formatValue(row['fitness_mean'] * 100):>10} "
                 f"{formatValue(row['fitness_std'] * 100):>10} "
                 f"{formatValue(row['gap_ref'] * 100):>10} "
                 f"{row['generation_mean']:>8.1f} "
-                f"{row['elapsed_mean']:>9.1f}s"
+                f"{row['elapsed_mean']:>9.1f}s "
+                f"{row['runs']:>4}"
             )
 
-        if len(present) == 2:
-            print(
-                f"  {stylePrint('Δ% ours vs baseline', C)}: "
-                f"{lookup[(size, population, 'ours')]['delta_pct_vs_baseline']:+.2f}%"
+            if algorithm == "baseline":
+                continue
+
+            if baseline_row is None or not baseline_row["fitness_mean"]:
+                print(
+                    f"  {stylePrint(f'Δ% {algorithm} vs baseline', C)}: — "
+                    "(rode o baseline)"
+                )
+                continue
+
+            delta = (
+                (row["fitness_mean"] - baseline_row["fitness_mean"])
+                / baseline_row["fitness_mean"]
+                * 100.0
             )
-        else:
-            print(
-                f"  {stylePrint('Δ% ours vs baseline', C)}: — "
-                "(rode os dois algoritmos)"
-            )
+            print(f"  {stylePrint(f'Δ% {algorithm} vs baseline', C)}: {delta:+.2f}%")
 
     print()
     print(
@@ -620,9 +658,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--algorithms",
         nargs="+",
-        choices=("baseline", "ours"),
-        default=["baseline", "ours"],
-        help="quais algoritmos rodam; a tabela sempre compara os dois.",
+        choices=("baseline", "ours", "original"),
+        default=["baseline", "ours", "original"],
+        help="quais algoritmos rodam; a tabela sempre compara com o baseline.",
+    )
+    parser.add_argument(
+        "--original-runs",
+        type=int,
+        default=5,
+        help="execuções do original por subset (ele é ~40x mais lento).",
     )
     parser.add_argument(
         "--universe",
@@ -775,8 +819,9 @@ def main(argv: list[str] | None = None) -> int:
         algorithms=args.algorithms,
         populations=args.population,
         runs=args.runs,
+        original_runs=args.original_runs,
         generations=args.generations,
-        shots={"baseline": 1, "ours": 50},
+        shots={"baseline": 1, "ours": 50, "original": 1024},
         seed=args.seed,
         references=references,
         progress=show_progress,
