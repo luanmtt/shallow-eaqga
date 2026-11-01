@@ -32,8 +32,10 @@ Dois presets:
 - ``default``: comparativo usual (híbrido com ``k=50``, original com 1024
   shots, S&P 500 atual, 30/40 ativos);
 - ``paper``: protocolo do artigo — S&P 500 **de 2024-09-30** (constituintes da
-  época, via revisão da Wikipedia), 1 shot por circuito, ``N ∈ {10, 20}``,
-  ``T = 20``, 10 subsets, 100 runs, ``p_a = 0.95``, ``p_s = 0.6``.
+  época, via revisão da Wikipedia), ``N ∈ {10, 20}``, ``T = 20``, 10 subsets,
+  100 runs, ``p_a = 0.95``, ``p_s = 0.6``. Shots: **1 no baseline** (como no
+  paper) e **50 nos nossos** (``ours`` e ``original``), para não handicapar os
+  algoritmos desenhados com amostragem.
 
 Uso:
     python eaqga.py --quick
@@ -171,9 +173,9 @@ class Preset:
     """Configuração pré-pronta do experimento.
 
     ``paper`` reproduz o protocolo do artigo (período, universo da época, N, T,
-    subsets, runs, ``p_a``, ``p_s``, ``q`` e 1 shot por circuito). ``default`` é
-    o nosso comparativo usual (``k=50`` no híbrido, 1024 shots no original,
-    universo atual).
+    subsets, runs, ``p_a``, ``p_s``, ``q``) e mantém 1 shot no baseline; os
+    nossos algoritmos usam 50. ``default`` é o comparativo usual (``k=50`` no
+    híbrido, 1024 shots no original, universo atual).
     """
 
     name: str
@@ -225,7 +227,7 @@ PRESETS: dict[str, Preset] = {
         universe="sp500",
         as_of="2024-09-30",
         original_runs=100,
-        shots={"baseline": 1, "ours": 1, "original": 1},
+        shots={"baseline": 1, "ours": 50, "original": 50},
         protocol=_PAPER_PROTOCOL,
     ),
 }

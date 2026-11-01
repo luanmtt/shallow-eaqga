@@ -362,8 +362,9 @@ pela posição no desenho.
   deixava todo controle em `|+>` e os CNOTs sem efeito na marginal `Z`.
   Medido: TVD(PATH com CNOT, PATH sem CNOT) = `0.00000`.
 - [x] **Preset `paper`:** `--preset paper` fixa o protocolo do artigo
-  (`N ∈ {10, 20}`, `T = 20`, 10 subsets × 100 runs, `p_a = 0.95`, `p_s = 0.6`,
-  1 shot por circuito) nos três algoritmos.
+  (`N ∈ {10, 20}`, `T = 20`, 10 subsets × 100 runs, `p_a = 0.95`, `p_s = 0.6`)
+  nos três algoritmos. Shots: `1` no baseline (fiel ao paper) e `50` em
+  `ours`/`original` (desenhados para amostragem; 1 shot os handicaparia).
 - [x] **Universo do período:** os constituintes do S&P 500 vêm da revisão da
   Wikipedia em **2024-09-30** (503 tickers, 480 com dados), não da lista atual
   (que difere em 44 entradas/saídas). Cache em

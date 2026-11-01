@@ -118,9 +118,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--output PATH", "diretório de saída (default: outputs/eaqga)."),
         ),
         note=(
-            "paper: 1 shot por circuito, p_a=0.95, p_s=0.6, T=20, 10 subsets, "
-            "100 runs, S&P 500 de 2024-09-30. O original é ~40× mais lento; "
-            "limite-o com --original-runs."
+            "paper: baseline com 1 shot (como no artigo), ours/original com 50; "
+            "p_a=0.95, p_s=0.6, T=20, 10 subsets, 100 runs, S&P 500 de "
+            "2024-09-30."
         ),
     ),
     Endpoint(
