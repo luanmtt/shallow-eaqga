@@ -154,6 +154,10 @@ class HybridConfig:
     a partir de exatamente dois bitstrings parentais. Todos os ``N`` filhos
     são gerados a partir desses dois elites; os pais não são copiados
     intactos para a próxima geração.
+
+    ``initial_h`` controla apenas a camada ``H^S`` da população inicial. A
+    partir da geração 1, o ``H^S`` fixo continua sendo aplicado; o genoma
+    também pode conter portas ``H`` em qualquer geração.
     """
 
     population_size: int = 20
@@ -166,6 +170,7 @@ class HybridConfig:
     max_degree: int | None = 2
     mutation_rate: float = 0.05
     p_s: float = 0.6
+    initial_h: bool = True
     seed: int = 42
     backend: BackendKind = BackendKind.STATEVECTOR
     evaluation_mode: EvaluationMode = EvaluationMode.SCALAR
@@ -189,6 +194,7 @@ class HybridConfig:
         _require_enum("backend", self.backend, BackendKind)
         _require_enum("evaluation_mode", self.evaluation_mode, EvaluationMode)
         _require_bool("verbose", self.verbose)
+        _require_bool("initial_h", self.initial_h)
         _require_probability("mutation_rate", self.mutation_rate)
         _require_probability("p_s", self.p_s)
         _require_forest_shape(self.forest_shape, self.max_degree)

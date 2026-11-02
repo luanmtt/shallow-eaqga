@@ -479,11 +479,13 @@ def build_hybrid_circuit(
     forest: Forest | None = None,
     *,
     measure: bool = True,
+    initial_h: bool = True,
 ) -> QuantumCircuit:
     """Monta ``H^S → genoma → CNOTs → medida`` para um indivíduo.
 
     ``forest=None`` (ou floresta vazia) monta só a parte 1Q; é o que a
-    população inicial usa.
+    população inicial usa. ``initial_h=False`` remove a camada ``H^S`` fixa
+    (ablação); nesse caso o genoma age diretamente sobre ``|0>^S``.
     """
 
     if not isinstance(genome, Genome):
@@ -492,12 +494,18 @@ def build_hybrid_circuit(
         )
     if not isinstance(measure, bool):
         raise TypeError(f"measure deve ser bool, recebeu {type(measure).__name__}.")
+    if not isinstance(initial_h, bool):
+        raise TypeError(
+            "initial_h deve ser bool, recebeu "
+            f"{type(initial_h).__name__}."
+        )
 
     size = genome.size
     circuit = QuantumCircuit(size, size)
 
-    for qubit in range(size):
-        circuit.h(qubit)
+    if initial_h:
+        for qubit in range(size):
+            circuit.h(qubit)
 
     for column in range(genome.num_columns):
         for qubit in range(size):
@@ -616,11 +624,14 @@ def measure_genome(
     simulator: AerSimulator | None = None,
     backend: BackendKind = BackendKind.STATEVECTOR,
     evaluation_mode: EvaluationMode = EvaluationMode.SCALAR,
+    initial_h: bool = True,
 ) -> HybridIndividual:
     """Mede o indivíduo ``shots`` vezes e devolve o melhor shot.
 
     É o equivalente híbrido de ``baseline._measure_circuit``: um circuito,
     ``k`` shots, o melhor deles vira o representante e alimenta o elitismo.
+    ``initial_h=False`` remove a camada ``H^S`` (usado na ablação da população
+    inicial).
     """
 
     if not isinstance(genome, Genome):
@@ -640,6 +651,11 @@ def measure_genome(
     seed_value = _require_int("seed", seed, minimum=0)
     _require_enum("backend", backend, BackendKind)
     _require_enum("evaluation_mode", evaluation_mode, EvaluationMode)
+    if not isinstance(initial_h, bool):
+        raise TypeError(
+            "initial_h deve ser bool, recebeu "
+            f"{type(initial_h).__name__}."
+        )
 
     if simulator is not None and not isinstance(simulator, AerSimulator):
         raise TypeError(
@@ -648,7 +664,7 @@ def measure_genome(
         )
 
     engine = simulator if simulator is not None else _make_simulator(backend)
-    circuit = build_hybrid_circuit(genome, forest)
+    circuit = build_hybrid_circuit(genome, forest, initial_h=initial_h)
 
     result = engine.run(
         circuit,

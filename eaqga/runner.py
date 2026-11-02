@@ -132,6 +132,7 @@ def _initial_population(
             simulator=simulator,
             backend=config.backend,
             evaluation_mode=config.evaluation_mode,
+            initial_h=config.initial_h,
         )
         population.append(individual)
 
@@ -277,6 +278,7 @@ def run_hybrid(
                 simulator=engine,
                 backend=config.backend,
                 evaluation_mode=config.evaluation_mode,
+                initial_h=True,
             )
             circuit_index += 1
             evaluations += 1
@@ -412,6 +414,7 @@ def run_row(
         "gate_set": config.gate_set.value,
         "mutation_rate": config.mutation_rate,
         "p_s": config.p_s,
+        "initial_h": config.initial_h,
         "forest_shape": config.forest_shape.value,
         "seed": config.seed,
         "best_bits": result.best_bits,
