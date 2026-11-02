@@ -9,6 +9,10 @@ Os dois algoritmos sempre rodam juntos: a comparação baseline × ours é o
 produto do script, não um extra. A tabela agregada sai no terminal e, com
 `--save-table`, também em CSV.
 
+Cada execução grava duas saídas: ``runs-*.csv`` (uma linha por execução) e
+``history-*.csv`` (uma linha por geração, com as colunas disponíveis em cada
+algoritmo).
+
 Por que por execução e não por circuito:
 
 - cada `run()` do Aer tem um custo fixo alto (~100-170 ms em 16 qubits, medido
@@ -81,6 +85,7 @@ from eaqga.config import (
     GateSet,
     HybridConfig,
 )
+from eaqga.history import HISTORY_COLUMNS, history_rows
 from eaqga.instance import QUBOInstance
 from eaqga.original_adapter import run_original
 from eaqga.portfolio import (
@@ -102,6 +107,7 @@ RUN_COLUMNS = (
     "population",
     "generations",
     "shots",
+    "initial_h",
     "algorithm",
     "subset",
     "run",
@@ -122,6 +128,7 @@ class RunRow(TypedDict):
     population: int
     generations: int
     shots: int
+    initial_h: bool
     algorithm: str
     subset: int
     run: int
@@ -255,6 +262,7 @@ class RunSpec:
     population: int
     generations: int
     shots: int
+    initial_h: bool
     algorithm: str
     subset: int
     run: int
@@ -266,8 +274,8 @@ class RunSpec:
     reference: float | None = None
 
 
-def _run_one(spec: RunSpec) -> RunRow:
-    """Roda uma execução e devolve uma linha de CSV (sem objetos grandes)."""
+def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
+    """Roda uma execução e devolve a linha de CSV e o histórico por geração."""
 
     instance = QUBOInstance.from_returns(
         spec.mu,
@@ -279,7 +287,7 @@ def _run_one(spec: RunSpec) -> RunRow:
     start = time.perf_counter()
 
     if spec.algorithm == "original":
-        original = run_original(
+        result = run_original(
             instance,
             population_size=spec.population,
             generations=spec.generations,
@@ -291,25 +299,8 @@ def _run_one(spec: RunSpec) -> RunRow:
             crossover_rate=spec.protocol.original_crossover,
             mutation_rate=spec.protocol.original_mutation,
         )
-        row: RunRow = {
-            "size": spec.size,
-            "population": spec.population,
-            "generations": spec.generations,
-            "shots": spec.shots,
-            "algorithm": spec.algorithm,
-            "subset": spec.subset,
-            "run": spec.run,
-            "seed": spec.seed,
-            "best_bits": original.best_bits,
-            "best_fitness": float(original.best_fitness),
-            "best_generation": int(original.best_generation),
-            "evaluations": int(original.evaluations),
-            "final_unique": len({m.bits for m in original.final_population}),
-            "elapsed_s": original.elapsed_s,
-        }
-        return row
-
-    if spec.algorithm == "baseline":
+        elapsed = result.elapsed_s
+    elif spec.algorithm == "baseline":
         config = BaselineConfig(
             population_size=spec.population,
             generations=spec.generations,
@@ -329,6 +320,7 @@ def _run_one(spec: RunSpec) -> RunRow:
             progress=spec.progress,
             reference=spec.reference,
         )
+        elapsed = time.perf_counter() - start
     else:
         config = HybridConfig(
             population_size=spec.population,
@@ -340,6 +332,7 @@ def _run_one(spec: RunSpec) -> RunRow:
             max_degree=2,
             mutation_rate=spec.protocol.mutation_rate,
             p_s=spec.protocol.p_s,
+            initial_h=spec.initial_h,
             seed=spec.seed,
             backend=BackendKind.MPS,
             verbose=False,
@@ -350,12 +343,14 @@ def _run_one(spec: RunSpec) -> RunRow:
             progress=spec.progress,
             reference=spec.reference,
         )
+        elapsed = time.perf_counter() - start
 
     row: RunRow = {
         "size": spec.size,
         "population": spec.population,
         "generations": spec.generations,
         "shots": spec.shots,
+        "initial_h": spec.initial_h,
         "algorithm": spec.algorithm,
         "subset": spec.subset,
         "run": spec.run,
@@ -364,10 +359,26 @@ def _run_one(spec: RunSpec) -> RunRow:
         "best_fitness": float(result.best_fitness),
         "best_generation": int(result.best_generation),
         "evaluations": int(result.evaluations),
-        "final_unique": len({ind.bits for ind in result.final_population}),
-        "elapsed_s": time.perf_counter() - start,
+        "final_unique": len(
+            {individual.bits for individual in result.final_population}
+        ),
+        "elapsed_s": elapsed,
     }
-    return row
+
+    history = history_rows(
+        result,
+        algorithm=spec.algorithm,
+        size=spec.size,
+        population=spec.population,
+        generations=spec.generations,
+        shots=spec.shots,
+        initial_h=spec.initial_h,
+        subset=spec.subset,
+        run=spec.run,
+        seed=spec.seed,
+    )
+
+    return row, history
 
 
 def _statevector_memory(size: int) -> str:
@@ -437,6 +448,7 @@ def _build_tasks(
     original_runs: int,
     generations: int,
     shots: dict[str, int],
+    initial_h: bool,
     seed: int,
     protocol: Protocol,
     references: dict[int, float] | None = None,
@@ -459,6 +471,7 @@ def _build_tasks(
                                 population=population,
                                 generations=generations,
                                 shots=shots[algorithm],
+                                initial_h=initial_h,
                                 algorithm=algorithm,
                                 subset=subset_index,
                                 run=run,
@@ -477,12 +490,14 @@ def _build_tasks(
 def _run_all(
     tasks: list[RunSpec],
     path: Path,
+    history_path: Path,
     *,
     jobs: int,
     backend: str = "loky",
     timings: dict[str, float] | None = None,
 ) -> list[RunRow]:
     path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows: list[RunRow] = []
     started = time.perf_counter()
@@ -492,13 +507,21 @@ def _run_all(
     )
     stride = max(1, len(tasks) // 20)
 
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("w", newline="", encoding="utf-8") as handle, (
+        history_path.open("w", newline="", encoding="utf-8")
+    ) as history_handle:
         fieldnames: list[str] = list(RUN_COLUMNS)
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
 
+        history_writer = csv.DictWriter(
+            history_handle,
+            fieldnames=list(HISTORY_COLUMNS),
+        )
+        history_writer.writeheader()
+
         stream = cast(
-            Iterator[RunRow],
+            Iterator[tuple[RunRow, list[dict[str, object]]]],
             Parallel(
                 n_jobs=jobs,
                 backend=backend,
@@ -507,11 +530,13 @@ def _run_all(
             )(delayed(_run_one)(task) for task in tasks),
         )
 
-        for index, row in enumerate(stream, start=1):
+        for index, (row, generations) in enumerate(stream, start=1):
             if index == 1 and timings is not None:
                 timings["primeiro"] = time.perf_counter() - started
             writer.writerow(row)
+            history_writer.writerows(generations)
             handle.flush()
+            history_handle.flush()
             rows.append(row)
 
             if index % stride and index != len(tasks):
@@ -781,6 +806,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="execuções do original por subset (default do preset).",
     )
     parser.add_argument(
+        "--shots-baseline",
+        type=int,
+        default=None,
+        help="sobrepõe os shots do baseline (default do preset).",
+    )
+    parser.add_argument(
+        "--shots-ours",
+        type=int,
+        default=None,
+        help="sobrepõe os shots do híbrido (default do preset).",
+    )
+    parser.add_argument(
+        "--shots-original",
+        type=int,
+        default=None,
+        help="sobrepõe os shots do original (default do preset).",
+    )
+    parser.add_argument(
+        "--initial-h",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="H^S na população inicial do híbrido (default: ligado).",
+    )
+    parser.add_argument(
         "--universe",
         choices=("sp500", "b3", "default"),
         default=None,
@@ -844,6 +893,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args.universe = args.universe or preset.universe
     args.as_of = args.as_of if args.as_of is not None else preset.as_of
+
+    shots = dict(preset.shots)
+    for algorithm, value in (
+        ("baseline", args.shots_baseline),
+        ("ours", args.shots_ours),
+        ("original", args.shots_original),
+    ):
+        if value is None:
+            continue
+        if value < 1:
+            raise SystemExit(f"--shots-{algorithm} deve ser >= 1.")
+        shots[algorithm] = value
+
+    initial_h = True if args.initial_h is None else args.initial_h
 
     if args.quick:
         args.sizes = [10]
@@ -943,7 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  {stylePrint('• protocolo', C)}: p_a={preset.protocol.p_a} · "
         f"p_s={preset.protocol.p_s} · T={args.generations} · "
-        f"shots={preset.shots}"
+        f"shots={shots} · initial_h={initial_h}"
     )
 
     clock = time.perf_counter()
@@ -983,7 +1046,8 @@ def main(argv: list[str] | None = None) -> int:
         runs=args.runs,
         original_runs=args.original_runs,
         generations=args.generations,
-        shots=preset.shots,
+        shots=shots,
+        initial_h=initial_h,
         seed=args.seed,
         protocol=preset.protocol,
         references=references,
@@ -992,9 +1056,11 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     output = args.output / f"runs-{stamp}.csv"
+    history_output = args.output / f"history-{stamp}.csv"
 
     print(f"  {stylePrint('• tarefas', C)}: {len(tasks)} · jobs={args.jobs} · backend={args.backend}")
     print(f"  {stylePrint('• saída', C)}: {output}")
+    print(f"  {stylePrint('• histórico', C)}: {history_output}")
 
     if args.jobs == 1:
         print(f"  {stylePrint('• workers', C)}: processo único (sem spawn)")
@@ -1008,13 +1074,14 @@ def main(argv: list[str] | None = None) -> int:
     rows = _run_all(
         tasks,
         output,
+        history_output,
         jobs=args.jobs,
         backend=args.backend,
         timings=timings,
     )
 
     summary = _summary_rows(rows, args.sizes, args.population, references)
-    _print_table(summary, preset.shots)
+    _print_table(summary, shots)
 
     if args.save_table:
         table_path = _write_summary_csv(
@@ -1031,6 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"      1º resultado  {timings.get('primeiro', 0.0):6.2f}s")
         print(f"      execução      {timings.get('execucao', 0.0):6.2f}s")
     print(f"\n  {stylePrint('runs.csv', C)}: {output}")
+    print(f"  {stylePrint('history.csv', C)}: {history_output}")
 
     return 0
 
