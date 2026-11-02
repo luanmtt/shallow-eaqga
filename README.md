@@ -45,6 +45,11 @@ eaqga/
 - [x] Arquitetura: `S = n`, Leitura A, 1Q Hilbert + floresta de CNOTs
 - [x] Pipeline de dados verificado: `qiskit-finance 0.4.1` + `yfinance` com
   `auto_adjust=False` (o provider falha com o default novo do `yfinance`)
+- [x] Exportação do histórico por geração (`history-*.csv`)
+- [x] Original reprodutível por seed (simulador + mutação)
+- [x] Diagnóstico de pareamento baseline × híbrido (`tests/compare_pairing.py`)
+- [x] Gráfico geração × portas por tipo (`tests/plot_gate_progress.py`)
+- [x] Flag `--no-initial-h` (só população inicial) e ablação da camada `H^S` (`tests/ablate_initial_h.py`)
 - [x] Primeiro lote de utilitários (`utils/`) e referência
 - [ ] Fechar forma da floresta e bias
 - [ ] Spec de genótipo/fenótipo
