@@ -17,6 +17,10 @@ Três decisões de adaptação (nenhuma altera o algoritmo):
 3. **Fitness.** O original avalia ``f(𝔼[x])``, a média dos valores decodificados.
    Como o QUBO é binário, aplicamos ``f`` ao ponto binarizado (limiar 0.5).
    Assim o fitness reportado é comparável ao do baseline/híbrido.
+4. **Seed.** O original chama ``simulator.run(...)`` sem ``seed_simulator`` e
+   ``mutacao`` sem ``rng`` (cai em ``secrets.randbits``). O adapter injeta uma
+   sequência determinística de seeds por execução, tanto na simulação quanto na
+   mutação, sem alterar a lógica do algoritmo.
 
 O que **não** mudamos: seleção, crossover, mutação, elitismo, número de portas,
 conjunto de portas e o loop de gerações — tudo do original.
@@ -27,8 +31,12 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import itertools
+import random
+import statistics
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -51,6 +59,7 @@ _ORIGINAL_SRC = _ORIGINAL_ROOT / "src"
 _ENGINE: ModuleType | None = None
 _INDIVIDUO: ModuleType | None = None
 _PRISTINE_CALCULAR = None
+_PRISTINE_MUTACAO = None
 
 
 def load_engine() -> tuple[ModuleType, ModuleType]:
@@ -82,8 +91,9 @@ def load_engine() -> tuple[ModuleType, ModuleType]:
     individuo_module = importlib.import_module("src.Individuo")
     engine_module = importlib.import_module("ParallelQuantumGA")
 
-    global _PRISTINE_CALCULAR
+    global _PRISTINE_CALCULAR, _PRISTINE_MUTACAO
     _PRISTINE_CALCULAR = individuo_module.Individuo.calcular_fitness
+    _PRISTINE_MUTACAO = individuo_module.Individuo.mutacao
 
     _INDIVIDUO = individuo_module
     _ENGINE = engine_module
@@ -104,7 +114,7 @@ class OriginalResult:
 
     best_individual: OriginalMember
     best_generation: int
-    history: dict[str, list[float]]
+    history: dict[str, list[object]]
     final_population: tuple[OriginalMember, ...]
     evaluations: int
     elapsed_s: float
@@ -127,10 +137,40 @@ def _bits_from_location(location: list[float] | None, size: int) -> str:
     return "".join("1" if value >= 0.5 else "0" for value in location)
 
 
-def _make_simulator(backend: BackendKind):
-    if backend is BackendKind.MPS:
-        return lambda: AerSimulator(method="matrix_product_state")
-    return AerSimulator
+def _make_simulator(
+    backend: BackendKind,
+    seeds: Iterator[int],
+):
+    """Fábrica de ``AerSimulator`` que injeta um ``seed_simulator`` por run.
+
+    O código original chama ``simulator.run(qc, shots=...)`` sem seed, então
+    duas execuções com o mesmo seed do algoritmo divergem. Aqui cada chamada
+    ao simulador recebe o próximo inteiro da sequência, que é reiniciada a
+    cada :func:`run_original`.
+    """
+
+    method = (
+        "matrix_product_state"
+        if backend is BackendKind.MPS
+        else None
+    )
+
+    def factory():
+        simulator = (
+            AerSimulator(method=method)
+            if method is not None
+            else AerSimulator()
+        )
+        run = simulator.run
+
+        def seeded_run(circuit, **kwargs):
+            kwargs.setdefault("seed_simulator", next(seeds) % (2**31 - 1))
+            return run(circuit, **kwargs)
+
+        simulator.run = seeded_run
+        return simulator
+
+    return factory
 
 
 def run_original(
@@ -185,11 +225,37 @@ def run_original(
 
     # N_QUBITS é global do módulo; 1 qubit por variável = modo binário.
     setattr(individuo_module, "N_QUBITS", 1)
-    setattr(individuo_module, "AerSimulator", _make_simulator(backend))
+    simulation_seeds = itertools.count(seed * 1_000_003 + 1)
+    setattr(
+        individuo_module,
+        "AerSimulator",
+        _make_simulator(backend, simulation_seeds),
+    )
 
     base_calcular = _PRISTINE_CALCULAR
     if base_calcular is None:  # pragma: no cover - load_engine sempre define
         raise RuntimeError("motor original não carregado corretamente.")
+
+    base_mutacao = _PRISTINE_MUTACAO
+    if base_mutacao is None:  # pragma: no cover - load_engine sempre define
+        raise RuntimeError("motor original não carregado corretamente.")
+
+    mutation_seeds = itertools.count(seed * 2_000_003 + 1)
+
+    def mutacao(self, taxa_mutacao_, geracao_atual, max_geracoes, rng=None):
+        # ``_create_offspring_task`` chama sem rng; o original usa
+        # ``secrets.randbits``, que ignora o seed do experimento.
+        if rng is None:
+            rng = random.Random(next(mutation_seeds))
+        return base_mutacao(
+            self,
+            taxa_mutacao_,
+            geracao_atual,
+            max_geracoes,
+            rng,
+        )
+
+    setattr(individuo_module.Individuo, "mutacao", mutacao)
 
     if shots is None:
         setattr(individuo_module.Individuo, "calcular_fitness", base_calcular)
@@ -244,15 +310,53 @@ def run_original(
     if best is None:
         raise RuntimeError("o motor original não devolveu best_individual.")
 
-    history = raw["history"]["best"]
+    raw_history = raw["history"]
+    best_history = [float(value) for value in raw_history["best"]]
+    length = len(best_history)
+
+    def _as_float_column(key: str) -> list[object]:
+        values = [float(value) for value in (raw_history.get(key) or [])[:length]]
+        return [*values, *([None] * (length - len(values)))]
+
+    avg_history = _as_float_column("avg")
+    median_history = _as_float_column("median")
+
+    locations = raw_history.get("best_location") or []
+    best_bits: list[object] = [
+        (
+            _bits_from_location(list(location), size)
+            if location is not None
+            else None
+        )
+        for location in locations[:length]
+    ]
+    best_bits += [None] * (length - len(best_bits))
+
+    # O `run()` avalia a população final depois do laço, mas não registra essa
+    # avaliação no histórico. Ela é a geração `T`: sem ela, o melhor fitness
+    # final não aparece no CSV e `best_generation` fica preso em `T-1`.
+    final_values = [
+        float(individual.fitness)
+        for individual in raw["final_population"]
+        if individual.fitness is not None
+    ]
     best_value = float(raw["best_fitness"])
+    best_history.append(best_value)
+    avg_history.append(
+        statistics.fmean(final_values) if final_values else None
+    )
+    median_history.append(
+        statistics.median(final_values) if final_values else None
+    )
+    best_bits.append(_bits_from_location(best.location, size))
+
     best_generation = next(
         (
             index
-            for index, value in enumerate(history)
-            if abs(float(value) - best_value) <= 1e-12
+            for index, value in enumerate(best_history)
+            if abs(value - best_value) <= 1e-12
         ),
-        len(history) - 1,
+        len(best_history) - 1,
     )
 
     final_population = tuple(
@@ -269,7 +373,12 @@ def run_original(
             fitness=best_value,
         ),
         best_generation=max(0, int(best_generation)),
-        history={"best": [float(value) for value in history]},
+        history={
+            "best": best_history,
+            "avg": avg_history,
+            "median": median_history,
+            "best_bits": best_bits,
+        },
         final_population=final_population,
         evaluations=population_size * (generations + 1),
         elapsed_s=elapsed,
