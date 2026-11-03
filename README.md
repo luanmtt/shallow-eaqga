@@ -64,6 +64,7 @@ eaqga/
 - [x] Exportação do histórico por geração (`history-*.csv`)
 - [x] Original reprodutível por seed (simulador + mutação)
 - [x] Gráfico geração × portas por tipo (`visualization/plot_gate_progress.py`)
+- [x] Circuitos do melhor indivíduo (`visualization/draw_best_circuits.py`)
 - [x] Flag `--no-initial-h` (só população inicial) e ablação da camada `H^S`
 - [x] Primeiro lote de utilitários (`utils/`) e referência
 - [ ] Fechar forma da floresta e bias
