@@ -11,7 +11,10 @@ portas sem essa camada fixa.
 
 Uso:
     python visualization/plot_gate_progress.py
-    python visualization/plot_gate_progress.py --size 30 --population 10 --generations 20
+    python visualization/plot_gate_progress.py \
+        --size 30 --population 10 --generations 20
+    python visualization/plot_gate_progress.py --algorithms ours \
+        --num-columns 2 3 4 --shots 50 --no-fixed-h
 """
 
 from __future__ import annotations
@@ -533,6 +536,19 @@ def main() -> int:
     parser.add_argument("--size", type=int, default=30)
     parser.add_argument("--population", type=int, default=10)
     parser.add_argument("--generations", type=int, default=20)
+    parser.add_argument(
+        "--algorithms",
+        nargs="+",
+        choices=("baseline", "ours", "original"),
+        default=["baseline", "ours", "original"],
+    )
+    parser.add_argument(
+        "--num-columns",
+        nargs="+",
+        type=int,
+        default=[2],
+        help="colunas 1Q do híbrido; cada valor vira um caso.",
+    )
     parser.add_argument("--subset", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--shots", type=int, default=1)
@@ -561,9 +577,21 @@ def main() -> int:
     args = parser.parse_args()
 
     shots = {
-        "baseline": args.shots_baseline if args.shots_baseline is not None else args.shots,
-        "ours": args.shots_ours if args.shots_ours is not None else args.shots,
-        "original": args.shots_original if args.shots_original is not None else args.shots,
+        "baseline": (
+            args.shots_baseline
+            if args.shots_baseline is not None
+            else args.shots
+        ),
+        "ours": (
+            args.shots_ours
+            if args.shots_ours is not None
+            else args.shots
+        ),
+        "original": (
+            args.shots_original
+            if args.shots_original is not None
+            else args.shots
+        ),
     }
 
     instance = _load_instance(
@@ -574,73 +602,90 @@ def main() -> int:
         subsets=args.subsets,
     )
 
+    if any(columns < 1 for columns in args.num_columns):
+        raise SystemExit("--num-columns deve ser >= 1.")
+
+    cases: list[tuple[str, str, int | None]] = []
+    for algorithm in args.algorithms:
+        if algorithm == "ours":
+            for columns in args.num_columns:
+                cases.append((f"ours · {columns}col", "ours", columns))
+        else:
+            cases.append((algorithm, algorithm, None))
+
+    case_shots = {
+        key: shots[algorithm]
+        for key, algorithm, _ in cases
+    }
+
     print(sepComment(40, stylePrint("Progresso de portas", C, bold=True)))
     print(
         f"  S={args.size} · pop={args.population} · T={args.generations} · "
         f"universe={args.universe}/{args.subsets} · subset={args.subset} · "
-        f"shots={shots} · initial_h={args.initial_h} · "
+        f"shots={case_shots} · initial_h={args.initial_h} · "
         f"fixed_h={args.fixed_h} · seed={args.seed}"
     )
     print()
+    print(f"  casos: {', '.join(key for key, _, _ in cases)}")
+    print()
 
-    baseline_config = BaselineConfig(
-        population_size=args.population,
-        generations=args.generations,
-        shots=shots["baseline"],
-        p_a=0.95,
-        p_s=0.6,
-        forest_shape=ForestShape.STAR,
-        max_degree=None,
-        seed=args.seed,
-        backend=BackendKind.MPS,
-        verbose=False,
-    )
-    hybrid_config = HybridConfig(
-        population_size=args.population,
-        generations=args.generations,
-        shots=shots["ours"],
-        num_columns=2,
-        gate_set=GateSet.HILBERT_1Q,
-        forest_shape=ForestShape.PATH,
-        max_degree=2,
-        mutation_rate=0.10,
-        p_s=0.6,
-        initial_h=args.initial_h,
-        fixed_h=args.fixed_h,
-        seed=args.seed,
-        backend=BackendKind.MPS,
-        verbose=False,
-    )
+    results: dict[str, object] = {}
+    raw_records: dict[str, object] = {}
+    subtract_h: dict[str, int] = {}
 
-    print("  rodando baseline...", flush=True)
-    baseline_result, baseline_records = _run_baseline_recorded(
-        instance,
-        baseline_config,
-    )
-    print("  rodando híbrido...", flush=True)
-    hybrid_result, hybrid_records = _run_hybrid_recorded(
-        instance,
-        hybrid_config,
-    )
-    print("  rodando original...", flush=True)
-    original_result, original_records = _run_original_recorded(
-        instance,
-        population=args.population,
-        generations=args.generations,
-        shots=shots["original"],
-        seed=args.seed,
-    )
+    for key, algorithm, columns in cases:
+        print(f"  rodando {key}...", flush=True)
 
-    results = {
-        "baseline": baseline_result,
-        "ours": hybrid_result,
-        "original": original_result,
-    }
-    raw_records = {
-        "baseline": baseline_records,
-        "ours": hybrid_records,
-        "original": original_records,
-    }
+        if algorithm == "baseline":
+            config = BaselineConfig(
+                population_size=args.population,
+                generations=args.generations,
+                shots=shots["baseline"],
+                p_a=0.95,
+                p_s=0.6,
+                forest_shape=ForestShape.STAR,
+                max_degree=None,
+                seed=args.seed,
+                backend=BackendKind.MPS,
+                verbose=False,
+            )
+            result, records = _run_baseline_recorded(instance, config)
+        elif algorithm == "ours":
+            if columns is None:  # pragma: no cover - cases sempre define
+                raise ValueError("caso 'ours' sem num_columns.")
+            config = HybridConfig(
+                population_size=args.population,
+                generations=args.generations,
+                shots=shots["ours"],
+                num_columns=columns,
+                gate_set=GateSet.HILBERT_1Q,
+                forest_shape=ForestShape.PATH,
+                max_degree=2,
+                mutation_rate=0.10,
+                p_s=0.6,
+                initial_h=args.initial_h,
+                fixed_h=args.fixed_h,
+                seed=args.seed,
+                backend=BackendKind.MPS,
+                verbose=False,
+            )
+            result, records = _run_hybrid_recorded(instance, config)
+        else:
+            result, records = _run_original_recorded(
+                instance,
+                population=args.population,
+                generations=args.generations,
+                shots=shots["original"],
+                seed=args.seed,
+            )
+
+        results[key] = result
+        raw_records[key] = records
+        subtract_h[key] = (
+            args.size
+            if algorithm == "ours" and args.fixed_h
+            else 0
+        )
 
     blocks = {
         algorithm: _to_blocks(
@@ -674,7 +719,7 @@ def main() -> int:
     _plot(
         (
             f"EAQGA · S={args.size} · pop={args.population} · "
-            f"T={args.generations} · shots={shots} · "
+            f"T={args.generations} · shots={case_shots} · "
             f"initial_h={args.initial_h} · fixed_h={args.fixed_h} · "
             f"seed={args.seed}"
         ),
@@ -686,7 +731,7 @@ def main() -> int:
 
     print()
     header = (
-        f"{'algoritmo':<10} {'portas/indiv':>13} "
+        f"{'algoritmo':<18} {'portas/indiv':>13} "
         f"{'sem H^S fixo':>13} {'best (×100)':>12}"
     )
     print(f"  {stylePrint(header, C, bold=True)}")
@@ -696,12 +741,11 @@ def main() -> int:
         variable = []
         for generation in range(1, args.generations + 1):
             value = data["total"][generation]
-            if algorithm == "ours":
-                value -= args.size  # camada H^S fixa
+            value -= subtract_h[algorithm]
             variable.append(value)
 
         print(
-            f"  {algorithm:<10} "
+            f"  {algorithm:<18} "
             f"{np.mean(totals):>13.2f} "
             f"{np.mean(variable):>13.2f} "
             f"{max(fitness[algorithm]['best']) * 100:>12.3f}"
