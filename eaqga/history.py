@@ -41,6 +41,7 @@ _META_COLUMNS: Final[tuple[str, ...]] = (
     "generations",
     "shots",
     "initial_h",
+    "fixed_h",
     "algorithm",
     "subset",
     "run",
@@ -163,6 +164,7 @@ def history_rows(
     generations: int,
     shots: int,
     initial_h: bool,
+    fixed_h: bool,
     subset: int,
     run: int,
     seed: int,
@@ -182,6 +184,11 @@ def history_rows(
             "initial_h deve ser bool, recebeu "
             f"{type(initial_h).__name__}."
         )
+    if not isinstance(fixed_h, bool):
+        raise TypeError(
+            "fixed_h deve ser bool, recebeu "
+            f"{type(fixed_h).__name__}."
+        )
 
     meta: dict[str, object] = {
         "size": size,
@@ -189,6 +196,7 @@ def history_rows(
         "generations": generations,
         "shots": shots,
         "initial_h": initial_h,
+        "fixed_h": fixed_h,
         "algorithm": algorithm,
         "subset": subset,
         "run": run,

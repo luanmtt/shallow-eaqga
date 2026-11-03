@@ -110,6 +110,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--shots-ours N", "shots do híbrido (default do preset)."),
             Flag("--shots-original N", "shots do original (default do preset)."),
             Flag("--initial-h / --no-initial-h", "H^S na população inicial do híbrido."),
+            Flag("--fixed-h / --no-fixed-h", "H^S nas gerações 1..T do híbrido."),
             Flag("--mutation-rate P", "p_mut do híbrido (default do preset)."),
             Flag("--original-mutation P", "p_mut do original (default do preset)."),
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
@@ -246,6 +247,8 @@ def _check() -> int:
             declared.add("--no-progress")
         if "--initial-h" in declared:
             declared.add("--no-initial-h")
+        if "--fixed-h" in declared:
+            declared.add("--no-fixed-h")
 
         listed = _listed_flags(endpoint)
         missing = sorted(declared - listed)

@@ -108,6 +108,7 @@ RUN_COLUMNS = (
     "generations",
     "shots",
     "initial_h",
+    "fixed_h",
     "algorithm",
     "subset",
     "run",
@@ -129,6 +130,7 @@ class RunRow(TypedDict):
     generations: int
     shots: int
     initial_h: bool
+    fixed_h: bool
     algorithm: str
     subset: int
     run: int
@@ -263,6 +265,7 @@ class RunSpec:
     generations: int
     shots: int
     initial_h: bool
+    fixed_h: bool
     algorithm: str
     subset: int
     run: int
@@ -333,6 +336,7 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
             mutation_rate=spec.protocol.mutation_rate,
             p_s=spec.protocol.p_s,
             initial_h=spec.initial_h,
+            fixed_h=spec.fixed_h,
             seed=spec.seed,
             backend=BackendKind.MPS,
             verbose=False,
@@ -351,6 +355,7 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         "generations": spec.generations,
         "shots": spec.shots,
         "initial_h": spec.initial_h,
+        "fixed_h": spec.fixed_h,
         "algorithm": spec.algorithm,
         "subset": spec.subset,
         "run": spec.run,
@@ -373,6 +378,7 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         generations=spec.generations,
         shots=spec.shots,
         initial_h=spec.initial_h,
+        fixed_h=spec.fixed_h,
         subset=spec.subset,
         run=spec.run,
         seed=spec.seed,
@@ -449,6 +455,7 @@ def _build_tasks(
     generations: int,
     shots: dict[str, int],
     initial_h: bool,
+    fixed_h: bool,
     seed: int,
     protocol: Protocol,
     references: dict[int, float] | None = None,
@@ -472,6 +479,7 @@ def _build_tasks(
                                 generations=generations,
                                 shots=shots[algorithm],
                                 initial_h=initial_h,
+                                fixed_h=fixed_h,
                                 algorithm=algorithm,
                                 subset=subset_index,
                                 run=run,
@@ -830,6 +838,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="H^S na população inicial do híbrido (default: ligado).",
     )
     parser.add_argument(
+        "--fixed-h",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="H^S nas gerações 1..T do híbrido (default: ligado).",
+    )
+    parser.add_argument(
         "--mutation-rate",
         type=float,
         default=None,
@@ -919,6 +933,7 @@ def main(argv: list[str] | None = None) -> int:
         shots[algorithm] = value
 
     initial_h = True if args.initial_h is None else args.initial_h
+    fixed_h = True if args.fixed_h is None else args.fixed_h
 
     protocol = preset.protocol
     for name, value in (
@@ -1036,7 +1051,8 @@ def main(argv: list[str] | None = None) -> int:
         f"  {stylePrint('• protocolo', C)}: p_a={protocol.p_a} · "
         f"p_s={protocol.p_s} · p_mut={protocol.mutation_rate} · "
         f"p_mut_original={protocol.original_mutation} · "
-        f"T={args.generations} · shots={shots} · initial_h={initial_h}"
+        f"T={args.generations} · shots={shots} · "
+        f"initial_h={initial_h} · fixed_h={fixed_h}"
     )
 
     clock = time.perf_counter()
@@ -1078,6 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
         generations=args.generations,
         shots=shots,
         initial_h=initial_h,
+        fixed_h=fixed_h,
         seed=args.seed,
         protocol=protocol,
         references=references,

@@ -155,9 +155,9 @@ class HybridConfig:
     são gerados a partir desses dois elites; os pais não são copiados
     intactos para a próxima geração.
 
-    ``initial_h`` controla apenas a camada ``H^S`` da população inicial. A
-    partir da geração 1, o ``H^S`` fixo continua sendo aplicado; o genoma
-    também pode conter portas ``H`` em qualquer geração.
+    ``initial_h`` controla a camada ``H^S`` da população inicial; ``fixed_h``
+    controla a mesma camada nas gerações 1..T. O genoma também pode conter
+    portas ``H`` em qualquer geração.
     """
 
     population_size: int = 20
@@ -171,6 +171,7 @@ class HybridConfig:
     mutation_rate: float = 0.05
     p_s: float = 0.6
     initial_h: bool = True
+    fixed_h: bool = True
     seed: int = 42
     backend: BackendKind = BackendKind.STATEVECTOR
     evaluation_mode: EvaluationMode = EvaluationMode.SCALAR
@@ -195,6 +196,7 @@ class HybridConfig:
         _require_enum("evaluation_mode", self.evaluation_mode, EvaluationMode)
         _require_bool("verbose", self.verbose)
         _require_bool("initial_h", self.initial_h)
+        _require_bool("fixed_h", self.fixed_h)
         _require_probability("mutation_rate", self.mutation_rate)
         _require_probability("p_s", self.p_s)
         _require_forest_shape(self.forest_shape, self.max_degree)
