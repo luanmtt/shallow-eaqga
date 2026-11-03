@@ -7,6 +7,18 @@ O alvo é o **EAQGA** ([arXiv:2504.17923](https://arxiv.org/abs/2504.17923)) com
 baseline, com um indivíduo binário próprio: `H^S` fixo, portas 1Q Hilbert,
 floresta de CNOTs e mutação apenas nas 1Q.
 
+## Instalação
+
+```bash
+make venv            # uv venv --clear .venv + uv pip install -r requirements.txt
+make quick           # smoke test com .venv/bin/python
+make sweep-mutation  # progressão de p_mut no modo --quick
+```
+
+`make venv` sempre recria o ambiente (`--clear`), então não há prompt de
+"ambiente já existe". Use `make quick` (ou `.venv/bin/python eaqga.py`); o
+`python` do sistema não tem as dependências.
+
 ## Escopo
 
 - **EAQGA fiel** (RY) é o baseline a bater.
