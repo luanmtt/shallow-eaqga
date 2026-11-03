@@ -10,8 +10,8 @@ baseline). Para ver só a parte evoluída, o resumo impresso também calcula as
 portas sem essa camada fixa.
 
 Uso:
-    python tests/plot_gate_progress.py
-    python tests/plot_gate_progress.py --size 30 --population 10 --generations 20
+    python visualization/plot_gate_progress.py
+    python visualization/plot_gate_progress.py --size 30 --population 10 --generations 20
 """
 
 from __future__ import annotations
