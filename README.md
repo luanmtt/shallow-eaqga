@@ -45,7 +45,7 @@ eaqga/
 ├── reference/           # código antigo, só para consulta
 │   ├── Individuo.py
 │   └── config.py
-├── empirical/           # experimentos locais (gitignored)
+├── visualization/       # gráficos de análise (portas, fitness)
 ├── tests/
 ├── requirements.txt
 └── README.md
@@ -60,9 +60,8 @@ eaqga/
   `auto_adjust=False` (o provider falha com o default novo do `yfinance`)
 - [x] Exportação do histórico por geração (`history-*.csv`)
 - [x] Original reprodutível por seed (simulador + mutação)
-- [x] Diagnóstico de pareamento baseline × híbrido (`tests/compare_pairing.py`)
-- [x] Gráfico geração × portas por tipo (`tests/plot_gate_progress.py`)
-- [x] Flag `--no-initial-h` (só população inicial) e ablação da camada `H^S` (`tests/ablate_initial_h.py`)
+- [x] Gráfico geração × portas por tipo (`visualization/plot_gate_progress.py`)
+- [x] Flag `--no-initial-h` (só população inicial) e ablação da camada `H^S`
 - [x] Primeiro lote de utilitários (`utils/`) e referência
 - [ ] Fechar forma da floresta e bias
 - [ ] Spec de genótipo/fenótipo
