@@ -59,7 +59,7 @@ import statistics
 import sys
 import time
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Iterator
 from typing import TypedDict, cast
@@ -830,6 +830,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="H^S na população inicial do híbrido (default: ligado).",
     )
     parser.add_argument(
+        "--mutation-rate",
+        type=float,
+        default=None,
+        help="p_mut do híbrido (default do preset).",
+    )
+    parser.add_argument(
+        "--original-mutation",
+        type=float,
+        default=None,
+        help="p_mut do original (default do preset).",
+    )
+    parser.add_argument(
         "--universe",
         choices=("sp500", "b3", "default"),
         default=None,
@@ -907,6 +919,23 @@ def main(argv: list[str] | None = None) -> int:
         shots[algorithm] = value
 
     initial_h = True if args.initial_h is None else args.initial_h
+
+    protocol = preset.protocol
+    for name, value in (
+        ("--mutation-rate", args.mutation_rate),
+        ("--original-mutation", args.original_mutation),
+    ):
+        if value is None:
+            continue
+        if not 0.0 <= value <= 1.0:
+            raise SystemExit(f"{name} deve estar em [0, 1].")
+    if args.mutation_rate is not None:
+        protocol = replace(protocol, mutation_rate=args.mutation_rate)
+    if args.original_mutation is not None:
+        protocol = replace(
+            protocol,
+            original_mutation=args.original_mutation,
+        )
 
     if args.quick:
         args.sizes = [10]
@@ -1004,9 +1033,10 @@ def main(argv: list[str] | None = None) -> int:
         "usando MPS."
     )
     print(
-        f"  {stylePrint('• protocolo', C)}: p_a={preset.protocol.p_a} · "
-        f"p_s={preset.protocol.p_s} · T={args.generations} · "
-        f"shots={shots} · initial_h={initial_h}"
+        f"  {stylePrint('• protocolo', C)}: p_a={protocol.p_a} · "
+        f"p_s={protocol.p_s} · p_mut={protocol.mutation_rate} · "
+        f"p_mut_original={protocol.original_mutation} · "
+        f"T={args.generations} · shots={shots} · initial_h={initial_h}"
     )
 
     clock = time.perf_counter()
@@ -1049,7 +1079,7 @@ def main(argv: list[str] | None = None) -> int:
         shots=shots,
         initial_h=initial_h,
         seed=args.seed,
-        protocol=preset.protocol,
+        protocol=protocol,
         references=references,
         progress=show_progress,
     )
