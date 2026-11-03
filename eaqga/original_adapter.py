@@ -100,12 +100,67 @@ def load_engine() -> tuple[ModuleType, ModuleType]:
     return _ENGINE, _INDIVIDUO
 
 
+_IGNORED_OPS = frozenset({"measure", "barrier", "id"})
+
+
+def _count_gate_ops(circuit) -> dict[str, int]:
+    return {
+        str(name): int(count)
+        for name, count in circuit.count_ops().items()
+        if str(name) not in _IGNORED_OPS
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class OriginalMember:
-    """Um indivíduo do original, reduzido ao que o experimento usa."""
+    """Um indivíduo do original, reduzido ao que o experimento usa.
+
+    ``gate_counts`` é preenchido para o melhor indivíduo; a população final
+    pode ficar sem as contagens para não pagar a construção dos circuitos.
+    """
 
     bits: str
     fitness: float
+    gate_counts: dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.bits, str):
+            raise TypeError(
+                f"bits deve ser str, recebeu {type(self.bits).__name__}."
+            )
+        if isinstance(self.fitness, bool) or not isinstance(
+            self.fitness, (int, float)
+        ):
+            raise TypeError(
+                "fitness deve ser numérico, recebeu "
+                f"{type(self.fitness).__name__}."
+            )
+        if self.gate_counts is not None:
+            if not isinstance(self.gate_counts, dict):
+                raise TypeError(
+                    "gate_counts deve ser dict ou None, recebeu "
+                    f"{type(self.gate_counts).__name__}."
+                )
+            for gate, count in self.gate_counts.items():
+                if not isinstance(gate, str):
+                    raise TypeError(
+                        "gate_counts deve ter chaves str, recebeu "
+                        f"{type(gate).__name__}."
+                    )
+                if isinstance(count, bool) or not isinstance(count, int):
+                    raise TypeError(
+                        f"gate_counts[{gate!r}] deve ser int, recebeu "
+                        f"{type(count).__name__}."
+                    )
+                if count < 0:
+                    raise ValueError(
+                        f"gate_counts[{gate!r}] deve ser >= 0, recebeu {count}."
+                    )
+            object.__setattr__(
+                self,
+                "gate_counts",
+                dict(self.gate_counts),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +365,10 @@ def run_original(
     if best is None:
         raise RuntimeError("o motor original não devolveu best_individual.")
 
+    best_gate_counts = _count_gate_ops(
+        best.construir_circuito_qiskit(measure=False)
+    )
+
     raw_history = raw["history"]
     best_history = [float(value) for value in raw_history["best"]]
     length = len(best_history)
@@ -371,6 +430,7 @@ def run_original(
         best_individual=OriginalMember(
             bits=_bits_from_location(best.location, size),
             fitness=best_value,
+            gate_counts=best_gate_counts,
         ),
         best_generation=max(0, int(best_generation)),
         history={
