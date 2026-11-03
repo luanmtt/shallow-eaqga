@@ -48,6 +48,7 @@ from eaqga.config import (
 from eaqga.instance import QUBOInstance
 from eaqga.original_adapter import load_engine, run_original
 from eaqga.portfolio import (
+    DEFAULT_UNIVERSE,
     PAPER_END,
     PAPER_START,
     RISK_AVERSION,
@@ -125,8 +126,19 @@ def _count_gates(circuit) -> Counter[str]:
     )
 
 
-def _load_instance(size: int, subset: int, seed: int) -> QUBOInstance:
-    symbols = fetch_sp500_tickers(as_of="2024-09-30")
+def _load_instance(
+    size: int,
+    subset: int,
+    seed: int,
+    *,
+    universe: str,
+    subsets: int,
+) -> QUBOInstance:
+    symbols = (
+        fetch_sp500_tickers(as_of="2024-09-30")
+        if universe == "sp500"
+        else DEFAULT_UNIVERSE
+    )
     data = build_portfolio(
         symbols,
         PAPER_START,
@@ -137,7 +149,7 @@ def _load_instance(size: int, subset: int, seed: int) -> QUBOInstance:
     universes = disjoint_universes(
         data.tickers,
         size,
-        subset + 1,
+        subsets,
         random.Random(seed),
     )
     indices = [position[ticker] for ticker in universes[subset]]
@@ -145,7 +157,7 @@ def _load_instance(size: int, subset: int, seed: int) -> QUBOInstance:
         data.mu[indices],
         data.sigma[np.ix_(indices, indices)],
         q=RISK_AVERSION,
-        name=f"sp500-{size}-{subset}",
+        name=f"{universe}-{size}-{subset}",
     )
 
 
@@ -525,27 +537,56 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--shots", type=int, default=1)
     parser.add_argument(
+        "--universe",
+        choices=("sp500", "default"),
+        default="sp500",
+    )
+    parser.add_argument("--subsets", type=int, default=1)
+    parser.add_argument("--shots-baseline", type=int, default=None)
+    parser.add_argument("--shots-ours", type=int, default=None)
+    parser.add_argument("--shots-original", type=int, default=None)
+    parser.add_argument(
         "--initial-h",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="H^S na população inicial do híbrido.",
     )
+    parser.add_argument(
+        "--fixed-h",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="H^S nas gerações 1..T do híbrido.",
+    )
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
     args = parser.parse_args()
 
-    instance = _load_instance(args.size, args.subset, args.seed)
+    shots = {
+        "baseline": args.shots_baseline if args.shots_baseline is not None else args.shots,
+        "ours": args.shots_ours if args.shots_ours is not None else args.shots,
+        "original": args.shots_original if args.shots_original is not None else args.shots,
+    }
+
+    instance = _load_instance(
+        args.size,
+        args.subset,
+        args.seed,
+        universe=args.universe,
+        subsets=args.subsets,
+    )
 
     print(sepComment(40, stylePrint("Progresso de portas", C, bold=True)))
     print(
         f"  S={args.size} · pop={args.population} · T={args.generations} · "
-        f"shots={args.shots} · initial_h={args.initial_h} · seed={args.seed}"
+        f"universe={args.universe}/{args.subsets} · subset={args.subset} · "
+        f"shots={shots} · initial_h={args.initial_h} · "
+        f"fixed_h={args.fixed_h} · seed={args.seed}"
     )
     print()
 
     baseline_config = BaselineConfig(
         population_size=args.population,
         generations=args.generations,
-        shots=args.shots,
+        shots=shots["baseline"],
         p_a=0.95,
         p_s=0.6,
         forest_shape=ForestShape.STAR,
@@ -557,7 +598,7 @@ def main() -> int:
     hybrid_config = HybridConfig(
         population_size=args.population,
         generations=args.generations,
-        shots=args.shots,
+        shots=shots["ours"],
         num_columns=2,
         gate_set=GateSet.HILBERT_1Q,
         forest_shape=ForestShape.PATH,
@@ -565,6 +606,7 @@ def main() -> int:
         mutation_rate=0.10,
         p_s=0.6,
         initial_h=args.initial_h,
+        fixed_h=args.fixed_h,
         seed=args.seed,
         backend=BackendKind.MPS,
         verbose=False,
@@ -585,7 +627,7 @@ def main() -> int:
         instance,
         population=args.population,
         generations=args.generations,
-        shots=args.shots,
+        shots=shots["original"],
         seed=args.seed,
     )
 
@@ -632,8 +674,9 @@ def main() -> int:
     _plot(
         (
             f"EAQGA · S={args.size} · pop={args.population} · "
-            f"T={args.generations} · shots={args.shots} · "
-            f"initial_h={args.initial_h} · seed={args.seed}"
+            f"T={args.generations} · shots={shots} · "
+            f"initial_h={args.initial_h} · fixed_h={args.fixed_h} · "
+            f"seed={args.seed}"
         ),
         series,
         fitness,
