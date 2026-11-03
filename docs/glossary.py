@@ -106,6 +106,12 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--generations N", "T_max, gerações (paper: 20)."),
             Flag("--algorithms {baseline,ours,original}", "quais rodam (default: os três)."),
             Flag("--original-runs N", "runs do original (paper: 100; default: 5)."),
+            Flag("--shots-baseline N", "shots do baseline (default do preset)."),
+            Flag("--shots-ours N", "shots do híbrido (default do preset)."),
+            Flag("--shots-original N", "shots do original (default do preset)."),
+            Flag("--initial-h / --no-initial-h", "H^S na população inicial do híbrido."),
+            Flag("--mutation-rate P", "p_mut do híbrido (default do preset)."),
+            Flag("--original-mutation P", "p_mut do original (default do preset)."),
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
             Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),
             Flag("--jobs N", "workers do joblib (default: min(8, cpus))."),
@@ -149,8 +155,8 @@ LIBRARY = (
 )
 
 _SETUP = (
-    "uv venv .venv",
-    "uv pip install --python .venv/bin/python -r requirements.txt",
+    "make venv  # uv venv --clear .venv + requirements.txt",
+    "make quick",
 )
 
 
@@ -238,6 +244,8 @@ def _check() -> int:
         if "--progress" in declared:
             # BooleanOptionalAction gera --no-progress sem aparecer no fonte.
             declared.add("--no-progress")
+        if "--initial-h" in declared:
+            declared.add("--no-initial-h")
 
         listed = _listed_flags(endpoint)
         missing = sorted(declared - listed)

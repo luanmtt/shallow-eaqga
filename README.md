@@ -45,6 +45,7 @@ eaqga/
 ├── reference/           # código antigo, só para consulta
 │   ├── Individuo.py
 │   └── config.py
+├── empirical/           # experimentos locais (gitignored)
 ├── tests/
 ├── requirements.txt
 └── README.md
