@@ -10,9 +10,8 @@ floresta de CNOTs e mutação apenas nas 1Q.
 ## Instalação
 
 ```bash
-make venv            # uv venv --clear .venv + uv pip install -r requirements.txt
-make quick           # smoke test com .venv/bin/python
-make sweep-mutation  # progressão de p_mut no modo --quick
+make venv   # uv venv --clear .venv + uv pip install -r requirements.txt
+make quick  # smoke test com .venv/bin/python
 ```
 
 `make venv` sempre recria o ambiente (`--clear`), então não há prompt de

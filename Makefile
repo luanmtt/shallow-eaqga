@@ -1,7 +1,7 @@
 PYTHON ?= .venv/bin/python
 UV ?= uv
 
-.PHONY: venv install quick test sweep-mutation
+.PHONY: venv install quick test
 
 venv:
 	$(UV) venv --clear .venv
@@ -15,6 +15,3 @@ quick:
 test:
 	$(PYTHON) tests/check_integrity.py
 	$(PYTHON) tests/test.py
-
-sweep-mutation:
-	$(PYTHON) tests/sweep_mutation.py
