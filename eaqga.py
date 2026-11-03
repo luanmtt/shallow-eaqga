@@ -161,6 +161,36 @@ class SummaryRow(TypedDict):
 
 ALGORITHMS = ("baseline", "ours", "original")
 
+_QUICK_CONFLICTS = (
+    "--preset",
+    "--sizes",
+    "--population",
+    "--subsets",
+    "--runs",
+    "--generations",
+    "--algorithms",
+    "--original-runs",
+    "--shots-baseline",
+    "--shots-ours",
+    "--shots-original",
+    "--initial-h",
+    "--no-initial-h",
+    "--fixed-h",
+    "--no-fixed-h",
+    "--mutation-rate",
+    "--original-mutation",
+    "--universe",
+    "--as-of",
+    "--seed",
+)
+
+
+def _has_flag(argv: list[str], flag: str) -> bool:
+    return any(
+        token == flag or token.startswith(f"{flag}=")
+        for token in argv
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class Protocol:
@@ -899,13 +929,31 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="smoke test: S=10, 2 subsets, 2 runs, 3 gerações, pop 5.",
+        help=(
+            "perfil fixo: S=10, 2 subsets, 2 runs, 3 gerações, pop 5; "
+            "não combina com flags de experimento."
+        ),
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     args = _parse_args(argv)
+
+    if args.quick:
+        conflicts = [
+            flag
+            for flag in _QUICK_CONFLICTS
+            if _has_flag(raw_args, flag)
+        ]
+        if conflicts:
+            raise SystemExit(
+                "--quick é um perfil fixo e não aceita "
+                f"{', '.join(conflicts)}. Rode sem --quick e passe os "
+                "parâmetros explicitamente."
+            )
+
     preset = PRESETS[args.preset]
 
     # Preset preenche o que não foi passado na linha de comando.
@@ -953,16 +1001,17 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.quick:
+        # Perfil fixo: nada aqui depende de flags de experimento.
         args.sizes = [10]
         args.subsets = 2
         args.runs = 2
         args.generations = 3
         args.population = [5]
         args.original_runs = 1
-        if preset.name != "paper":
-            # smoke offline: 30 large caps em cache
-            args.universe = "default"
-            args.as_of = None
+        args.algorithms = list(ALGORITHMS)
+        args.universe = "default"
+        args.as_of = None
+        args.seed = 0
 
     if args.jobs < 1 and args.jobs != -1:
         raise SystemExit("--jobs deve ser >= 1 ou -1.")
