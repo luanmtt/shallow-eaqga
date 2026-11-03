@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
 
 from .config import BackendKind
@@ -122,6 +123,7 @@ class OriginalMember:
     bits: str
     fitness: float
     gate_counts: dict[str, int] | None = None
+    circuit: QuantumCircuit | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.bits, str):
@@ -160,6 +162,13 @@ class OriginalMember:
                 self,
                 "gate_counts",
                 dict(self.gate_counts),
+            )
+        if self.circuit is not None and not isinstance(
+            self.circuit, QuantumCircuit
+        ):
+            raise TypeError(
+                "circuit deve ser QuantumCircuit ou None, recebeu "
+                f"{type(self.circuit).__name__}."
             )
 
 
@@ -365,9 +374,8 @@ def run_original(
     if best is None:
         raise RuntimeError("o motor original não devolveu best_individual.")
 
-    best_gate_counts = _count_gate_ops(
-        best.construir_circuito_qiskit(measure=False)
-    )
+    best_circuit = best.construir_circuito_qiskit(measure=True)
+    best_gate_counts = _count_gate_ops(best_circuit)
 
     raw_history = raw["history"]
     best_history = [float(value) for value in raw_history["best"]]
@@ -431,6 +439,7 @@ def run_original(
             bits=_bits_from_location(best.location, size),
             fitness=best_value,
             gate_counts=best_gate_counts,
+            circuit=best_circuit,
         ),
         best_generation=max(0, int(best_generation)),
         history={
