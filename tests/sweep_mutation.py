@@ -34,7 +34,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PYTHON = _ROOT / ".venv" / "bin" / "python"
-OUTPUT = _ROOT / "outputs" / "mutation-sweep"
+OUTPUT = _ROOT / "empirical" / "mutation-sweep"
 C = "#f5c2e7"
 
 
