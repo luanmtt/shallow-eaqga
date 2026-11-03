@@ -931,7 +931,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=(
             "perfil fixo: S=10, 2 subsets, 2 runs, 3 gerações, pop 5; "
-            "não combina com flags de experimento."
+            "H^S só na geração 0; não combina com flags de experimento."
         ),
     )
     return parser.parse_args(argv)
@@ -1012,6 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
         args.universe = "default"
         args.as_of = None
         args.seed = 0
+        initial_h = True
+        fixed_h = False
 
     if args.jobs < 1 and args.jobs != -1:
         raise SystemExit("--jobs deve ser >= 1 ou -1.")

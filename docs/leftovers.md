@@ -394,14 +394,17 @@ pela posição no desenho.
    `STAR` tem 1 bit enviesado e `PATH` tem `~S-2`; comparar nosso `PATH` com um
    baseline `STAR` confunde topologia com indivíduo. Recomendação: `PATH` nos
    dois na comparação principal e `STAR` como reprodução do paper.
-9. [ ] **Camada `H^S` do híbrido.** Ablação em `S=30`, `T=20`, 10 seeds e 2
-   subsets: remover `H^S` só da população inicial é neutro no best final;
-   remover de todas as gerações melhora o best final em `+0.06..+0.14` (×100),
-   com 8–9/10 seeds, mas piora o best inicial (menos diversidade).
-   `HybridConfig.initial_h` / `--no-initial-h` controla **só a geração 0**;
-   as gerações 1..T continuam com `H^S` fixo. Remover de todas as gerações
-   exige a variante de ablação (`build_hybrid_circuit(initial_h=False)` em
-   todas as chamadas) e ainda não é default.
+9. [ ] **Camada `H^S` do híbrido.** Ablação em `S=30`, `T=20`, 10 seeds,
+   50 shots, subsets 0 e 1:
+   - `H^S` só na geração 0 (`initial_h=True, fixed_h=False`): `+0.052` no
+     subset 0 e `+0.087` no subset 1 (×100), 9/10 seeds; preserva o best
+     inicial.
+   - sem `H` em nenhuma geração: `+0.062`/`+0.072`, 8–9/10 seeds; best
+     inicial menor.
+   - sem `H` só na geração 0 (`initial_h=False, fixed_h=True`): neutro.
+   `--quick` agora usa `initial_h=True, fixed_h=False`. Fora do quick, os
+   controles são `HybridConfig.initial_h`/`fixed_h` e as flags
+   `--initial-h/--no-initial-h`, `--fixed-h/--no-fixed-h`.
 
 ---
 

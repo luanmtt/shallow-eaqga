@@ -98,7 +98,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         command=".venv/bin/python eaqga.py --quick",
         flags=(
             Flag("--preset {default,paper}", "paper = protocolo do artigo; default = comparativo usual."),
-            Flag("--quick", "perfil fixo: S=10, 2 subsets, 2 runs, 3 gerações, pop 5; sem flags de experimento."),
+            Flag("--quick", "perfil fixo: S=10, 2 subsets, 2 runs, 3 gerações, pop 5; H^S só na geração 0."),
             Flag("--sizes N [N ...]", "tamanhos (paper: 30 40)."),
             Flag("--population N [N ...]", "populações (paper: 10 20; default: 20)."),
             Flag("--subsets N", "subconjuntos disjuntos por tamanho (10)."),

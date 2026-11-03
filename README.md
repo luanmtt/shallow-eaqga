@@ -18,8 +18,9 @@ make quick  # smoke test com .venv/bin/python
 "ambiente já existe". Use `make quick` (ou `.venv/bin/python eaqga.py`); o
 `python` do sistema não tem as dependências.
 
-`--quick` é um perfil fixo (`S=10`, 2 subsets, 2 runs, `T=3`, pop 5) e não
-aceita flags de experimento; para variar parâmetros, rode sem `--quick`.
+`--quick` é um perfil fixo (`S=10`, 2 subsets, 2 runs, `T=3`, pop 5, `H^S`
+só na geração 0) e não aceita flags de experimento; para variar parâmetros,
+rode sem `--quick`.
 
 ## Escopo
 
