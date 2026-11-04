@@ -160,6 +160,29 @@ _SETUP = (
     "make quick",
 )
 
+QUICK_PROFILE: tuple[tuple[str, str], ...] = (
+    ("S", "10"),
+    ("pop", "5"),
+    ("subsets", "2"),
+    ("runs", "2"),
+    ("T", "3"),
+    ("original runs", "1"),
+    ("algoritmos", "baseline, ours, original"),
+    ("universo", "default (30 large caps)"),
+    ("período", "2023-10-01..2024-09-30"),
+    ("seed", "0"),
+    ("H^S inicial", "ligado (só na geração 0)"),
+    ("H^S fixo (1..T)", "desligado"),
+    ("shots", "1 / 50 / 1024 (baseline / ours / original)"),
+    ("p_a / p_s", "0.95 / 0.60"),
+    ("p_mut híbrido", "0.10"),
+    ("p_mut original", "0.30"),
+    ("jobs", "min(8, cpus)"),
+    ("backend", "loky"),
+    ("progress", "auto (só com --jobs 1)"),
+    ("saída", "outputs/eaqga"),
+)
+
 
 def _wrap(text: str, width: int) -> list[str]:
     """Quebra um texto em linhas de até ``width`` caracteres."""
@@ -181,6 +204,28 @@ def _wrap(text: str, width: int) -> list[str]:
         lines.append(current)
 
     return lines
+
+
+def _render_quick() -> None:
+    """Seção do ``--quick``: perfil fixo, sem flags de experimento."""
+
+    print(_rule("quick · perfil fixo", TITLE))
+    for line in _wrap(
+        "--quick não combina com flags de experimento: os valores abaixo são "
+        "fixos. Para variar qualquer um, rode sem --quick e passe a flag.",
+        70,
+    ):
+        print(f"  {line}")
+
+    width = max(len(name) for name, _ in QUICK_PROFILE) + 2
+    print()
+    print(f"  {stylePrint('PARÂMETRO'.ljust(width), TITLE, bold=True)}VALOR")
+
+    for name, value in QUICK_PROFILE:
+        padding = " " * max(0, width - len(name))
+        print(f"  {stylePrint(name, FLAG_COLOR)}{padding}{value}")
+
+    print()
 
 
 def _render(endpoint: Endpoint) -> None:
@@ -323,6 +368,9 @@ def main(argv: list[str] | None = None) -> int:
 
     for endpoint in selected:
         _render(endpoint)
+
+    if any(endpoint.path == "eaqga.py" for endpoint in selected):
+        _render_quick()
 
     print(_rule("biblioteca · não executável"))
     width = max(len(path) for path, _ in LIBRARY) + 2
