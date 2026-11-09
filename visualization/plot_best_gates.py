@@ -57,7 +57,7 @@ from eaqga.runner import run_hybrid
 from eaqga.utils.embellish import sepComment, stylePrint
 
 C = "#f5c2e7"
-OUTPUT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = Path(__file__).resolve().parent / "best-gates"
 
 _IGNORED = frozenset({"measure", "barrier", "id"})
 

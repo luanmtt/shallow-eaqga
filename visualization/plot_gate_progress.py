@@ -63,7 +63,7 @@ from eaqga.runner import run_hybrid
 from eaqga.utils.embellish import sepComment, stylePrint
 
 C = "#f5c2e7"
-OUTPUT_DIR = _ROOT / "outputs" / "plots"
+OUTPUT_DIR = Path(__file__).resolve().parent / "gate-progress"
 
 _IGNORED = frozenset({"measure", "barrier", "id"})
 
