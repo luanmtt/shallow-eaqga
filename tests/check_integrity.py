@@ -92,6 +92,10 @@ def check_config_defaults() -> None:
     _check(hybrid.population_size >= 2, "population_size default inválido")
     _check(hybrid.n_elites == 2, "n_elites default deve ser 2")
     _check(
+        hybrid.adaptive_mutation is False,
+        "adaptive_mutation default deve ser False",
+    )
+    _check(
         hybrid.evaluation_mode is EvaluationMode.SCALAR,
         "avaliação default deve ser SCALAR",
     )
@@ -156,6 +160,11 @@ def check_config_guards() -> None:
         ValueError,
         lambda: HybridConfig(mutation_rate=1.5),
         "mutation_rate=1.5",
+    )
+    _expect(
+        TypeError,
+        lambda: HybridConfig(adaptive_mutation=cast(bool, 1)),
+        "adaptive_mutation não bool",
     )
     _expect(
         TypeError,

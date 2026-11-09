@@ -112,6 +112,10 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--initial-h / --no-initial-h", "H^S na população inicial do híbrido."),
             Flag("--fixed-h / --no-fixed-h", "H^S nas gerações 1..T do híbrido."),
             Flag("--mutation-rate P", "p_mut do híbrido (default do preset)."),
+            Flag(
+                "--adaptive-mutation",
+                "p_mut do FbQGA: sobe quando o std do fitness cai (teto 2× a base).",
+            ),
             Flag("--original-mutation P", "p_mut do original (default do preset)."),
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
             Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),

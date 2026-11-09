@@ -169,6 +169,7 @@ class HybridConfig:
     forest_shape: ForestShape = ForestShape.PATH
     max_degree: int | None = 2
     mutation_rate: float = 0.05
+    adaptive_mutation: bool = False
     p_s: float = 0.6
     initial_h: bool = True
     fixed_h: bool = True
@@ -198,6 +199,7 @@ class HybridConfig:
         _require_bool("initial_h", self.initial_h)
         _require_bool("fixed_h", self.fixed_h)
         _require_probability("mutation_rate", self.mutation_rate)
+        _require_bool("adaptive_mutation", self.adaptive_mutation)
         _require_probability("p_s", self.p_s)
         _require_forest_shape(self.forest_shape, self.max_degree)
 

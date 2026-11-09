@@ -14,6 +14,7 @@ Semântica das colunas:
 - ``unique_bits``/``unique_genomes``/``mean_hamming``/``bit_entropy``:
   diversidade (só o híbrido registra);
 - ``non_identity``/``h_gates``/``t_gates``: uso do genoma (só o híbrido);
+- ``mutation_rate``: taxa de mutação efetiva usada na geração (só o híbrido);
 - ``forest_edges``/``forest_layers``/``forest_chains``: no híbrido são médias
   da geração; no baseline são do melhor indivíduo da geração;
 - ``best_bits``: bitstring do melhor fitness visto.
@@ -61,6 +62,7 @@ _METRIC_COLUMNS: Final[tuple[str, ...]] = (
     "non_identity",
     "h_gates",
     "t_gates",
+    "mutation_rate",
     "forest_edges",
     "forest_layers",
     "forest_chains",

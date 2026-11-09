@@ -36,6 +36,7 @@ from .individuo import (
 
 __all__ = [
     "PopulationMetrics",
+    "adaptive_mutation_rate",
     "make_children",
     "population_metrics",
     "rank_population",
@@ -110,11 +111,45 @@ def top_two(
 # Herança
 
 
+def adaptive_mutation_rate(
+    population: Sequence[HybridIndividual],
+    base_rate: float,
+) -> float:
+    """Taxa de mutação adaptativa do FbQGA.
+
+    ``P_m = P_f * (1 + (max(fit) - std(fit)) / (max(fit) + std(fit)))``.
+    Quando a diversidade (``std``) cai, a taxa sobe; o teto é ``2 * P_f``.
+    Fitness não positivo cai no fallback ``P_f``.
+    """
+
+    if isinstance(base_rate, bool) or not isinstance(base_rate, Real):
+        raise TypeError(
+            f"base_rate deve ser float, recebeu {type(base_rate).__name__}."
+        )
+    rate = float(base_rate)
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError(f"base_rate deve estar em [0, 1], recebeu {rate}.")
+
+    items = _as_population(population)
+    values = [individual.fitness for individual in items]
+    maximum = max(values)
+    std = statistics.pstdev(values)
+    denominator = maximum + std
+
+    if denominator <= 0.0:
+        return rate
+
+    ratio = (maximum - std) / denominator
+    return max(0.0, min(1.0, rate * (1.0 + ratio)))
+
+
 def make_children(
     first: HybridIndividual,
     second: HybridIndividual,
     config: HybridConfig,
     rng: random.Random,
+    *,
+    mutation_rate: float | None = None,
 ) -> tuple[Genome, ...]:
     """Gera os ``N`` genomas da próxima geração a partir do top-2.
 
@@ -146,12 +181,13 @@ def make_children(
         )
 
     children: list[Genome] = []
+    rate = config.mutation_rate if mutation_rate is None else mutation_rate
 
     for _ in range(config.population_size):
         mixed = crossover_genomes(first.genome, second.genome, rng, mix=_MIX)
         mutated = mutate_genome(
             mixed,
-            config.mutation_rate,
+            rate,
             config.gate_set,
             rng,
             min_changes=1,

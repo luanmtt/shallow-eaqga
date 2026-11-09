@@ -109,6 +109,7 @@ RUN_COLUMNS = (
     "shots",
     "initial_h",
     "fixed_h",
+    "adaptive_mutation",
     "algorithm",
     "subset",
     "run",
@@ -131,6 +132,7 @@ class RunRow(TypedDict):
     shots: int
     initial_h: bool
     fixed_h: bool
+    adaptive_mutation: bool
     algorithm: str
     subset: int
     run: int
@@ -178,6 +180,7 @@ _QUICK_CONFLICTS = (
     "--fixed-h",
     "--no-fixed-h",
     "--mutation-rate",
+    "--adaptive-mutation",
     "--original-mutation",
     "--universe",
     "--as-of",
@@ -305,6 +308,7 @@ class RunSpec:
     protocol: Protocol
     progress: bool = False
     reference: float | None = None
+    adaptive_mutation: bool = False
 
 
 def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
@@ -364,6 +368,7 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
             forest_shape=ForestShape.PATH,
             max_degree=2,
             mutation_rate=spec.protocol.mutation_rate,
+            adaptive_mutation=spec.adaptive_mutation,
             p_s=spec.protocol.p_s,
             initial_h=spec.initial_h,
             fixed_h=spec.fixed_h,
@@ -386,6 +391,7 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         "shots": spec.shots,
         "initial_h": spec.initial_h,
         "fixed_h": spec.fixed_h,
+        "adaptive_mutation": spec.adaptive_mutation,
         "algorithm": spec.algorithm,
         "subset": spec.subset,
         "run": spec.run,
@@ -486,6 +492,7 @@ def _build_tasks(
     shots: dict[str, int],
     initial_h: bool,
     fixed_h: bool,
+    adaptive_mutation: bool,
     seed: int,
     protocol: Protocol,
     references: dict[int, float] | None = None,
@@ -510,6 +517,7 @@ def _build_tasks(
                                 shots=shots[algorithm],
                                 initial_h=initial_h,
                                 fixed_h=fixed_h,
+                                adaptive_mutation=adaptive_mutation,
                                 algorithm=algorithm,
                                 subset=subset_index,
                                 run=run,
@@ -880,6 +888,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="p_mut do híbrido (default do preset).",
     )
     parser.add_argument(
+        "--adaptive-mutation",
+        action="store_true",
+        help=(
+            "p_mut adaptativa do FbQGA: sobe quando o std do fitness cai "
+            "(teto 2 * --mutation-rate)."
+        ),
+    )
+    parser.add_argument(
         "--original-mutation",
         type=float,
         default=None,
@@ -1101,6 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  {stylePrint('• protocolo', C)}: p_a={protocol.p_a} · "
         f"p_s={protocol.p_s} · p_mut={protocol.mutation_rate} · "
+        f"adaptive_mut={args.adaptive_mutation} · "
         f"p_mut_original={protocol.original_mutation} · "
         f"T={args.generations} · shots={shots} · "
         f"initial_h={initial_h} · fixed_h={fixed_h}"
@@ -1146,6 +1163,7 @@ def main(argv: list[str] | None = None) -> int:
         shots=shots,
         initial_h=initial_h,
         fixed_h=fixed_h,
+        adaptive_mutation=args.adaptive_mutation,
         seed=args.seed,
         protocol=protocol,
         references=references,

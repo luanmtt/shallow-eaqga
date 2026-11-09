@@ -38,6 +38,7 @@ from .individuo import HybridIndividual, measure_genome, random_genome
 from .instance import QUBOInstance
 from .population import (
     PopulationMetrics,
+    adaptive_mutation_rate,
     make_children,
     population_metrics,
     top_two,
@@ -71,6 +72,7 @@ _COLUMNS: Final[tuple[str, ...]] = (
     "non_identity",
     "h_gates",
     "t_gates",
+    "mutation_rate",
     "forest_edges",
     "forest_layers",
     "forest_chains",
@@ -209,6 +211,7 @@ def run_hybrid(
         generation: int,
         current: PopulationMetrics,
         forest: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        mutation_rate: float | None = None,
     ) -> None:
         metrics.append(current)
         history["generation"].append(generation)
@@ -224,13 +227,14 @@ def run_hybrid(
         history["non_identity"].append(current.non_identity)
         history["h_gates"].append(current.h_gates)
         history["t_gates"].append(current.t_gates)
+        history["mutation_rate"].append(mutation_rate)
         history["forest_edges"].append(forest[0])
         history["forest_layers"].append(forest[1])
         history["forest_chains"].append(forest[2])
         history["best_bits"].append(best_so_far.bits)
 
     first_metrics = population_metrics(population, 0)
-    record(0, first_metrics)
+    record(0, first_metrics, mutation_rate=config.mutation_rate)
 
     if bars is not None:
         print(
@@ -250,7 +254,18 @@ def run_hybrid(
 
     for generation in range(1, config.generations + 1):
         first, second = top_two(population)
-        genomes = make_children(first, second, config, rng)
+        generation_rate = (
+            adaptive_mutation_rate(population, config.mutation_rate)
+            if config.adaptive_mutation
+            else config.mutation_rate
+        )
+        genomes = make_children(
+            first,
+            second,
+            config,
+            rng,
+            mutation_rate=generation_rate,
+        )
 
         new_population: list[HybridIndividual] = []
         edge_counts: list[int] = []
@@ -308,6 +323,7 @@ def run_hybrid(
                 sum(layer_counts) / len(layer_counts),
                 sum(chain_counts) / len(chain_counts),
             ),
+            mutation_rate=generation_rate,
         )
 
         if bars is not None:
@@ -413,6 +429,7 @@ def run_row(
         "num_columns": config.num_columns,
         "gate_set": config.gate_set.value,
         "mutation_rate": config.mutation_rate,
+        "adaptive_mutation": config.adaptive_mutation,
         "p_s": config.p_s,
         "initial_h": config.initial_h,
         "fixed_h": config.fixed_h,
