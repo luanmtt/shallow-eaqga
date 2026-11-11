@@ -81,9 +81,11 @@ from eaqga.baseline import run_baseline
 from eaqga.config import (
     BackendKind,
     BaselineConfig,
+    BiasLayer,
     ForestShape,
     GateSet,
     HybridConfig,
+    SelectionMetric,
 )
 from eaqga.history import HISTORY_COLUMNS, history_rows
 from eaqga.instance import QUBOInstance
@@ -110,6 +112,8 @@ RUN_COLUMNS = (
     "initial_h",
     "fixed_h",
     "adaptive_mutation",
+    "selection_metric",
+    "bias_layer",
     "algorithm",
     "subset",
     "run",
@@ -133,6 +137,8 @@ class RunRow(TypedDict):
     initial_h: bool
     fixed_h: bool
     adaptive_mutation: bool
+    selection_metric: str
+    bias_layer: str
     algorithm: str
     subset: int
     run: int
@@ -181,6 +187,8 @@ _QUICK_CONFLICTS = (
     "--no-fixed-h",
     "--mutation-rate",
     "--adaptive-mutation",
+    "--selection-metric",
+    "--bias-layer",
     "--original-mutation",
     "--universe",
     "--as-of",
@@ -309,6 +317,8 @@ class RunSpec:
     progress: bool = False
     reference: float | None = None
     adaptive_mutation: bool = False
+    selection_metric: str = SelectionMetric.BEST.value
+    bias_layer: str = BiasLayer.NONE.value
 
 
 def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
@@ -369,6 +379,8 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
             max_degree=2,
             mutation_rate=spec.protocol.mutation_rate,
             adaptive_mutation=spec.adaptive_mutation,
+            selection_metric=SelectionMetric(spec.selection_metric),
+            bias_layer=BiasLayer(spec.bias_layer),
             p_s=spec.protocol.p_s,
             initial_h=spec.initial_h,
             fixed_h=spec.fixed_h,
@@ -392,6 +404,8 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         "initial_h": spec.initial_h,
         "fixed_h": spec.fixed_h,
         "adaptive_mutation": spec.adaptive_mutation,
+        "selection_metric": spec.selection_metric,
+        "bias_layer": spec.bias_layer,
         "algorithm": spec.algorithm,
         "subset": spec.subset,
         "run": spec.run,
@@ -415,6 +429,9 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         shots=spec.shots,
         initial_h=spec.initial_h,
         fixed_h=spec.fixed_h,
+        selection_metric=(
+            spec.selection_metric if spec.algorithm == "ours" else None
+        ),
         subset=spec.subset,
         run=spec.run,
         seed=spec.seed,
@@ -493,6 +510,8 @@ def _build_tasks(
     initial_h: bool,
     fixed_h: bool,
     adaptive_mutation: bool,
+    selection_metric: str,
+    bias_layer: str,
     seed: int,
     protocol: Protocol,
     references: dict[int, float] | None = None,
@@ -518,6 +537,8 @@ def _build_tasks(
                                 initial_h=initial_h,
                                 fixed_h=fixed_h,
                                 adaptive_mutation=adaptive_mutation,
+                                selection_metric=selection_metric,
+                                bias_layer=bias_layer,
                                 algorithm=algorithm,
                                 subset=subset_index,
                                 run=run,
@@ -896,6 +917,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--selection-metric",
+        choices=tuple(metric.value for metric in SelectionMetric),
+        default=SelectionMetric.BEST.value,
+        help=(
+            "critério de ranqueamento do híbrido: 'best' usa o melhor shot; "
+            "'mean'/'median' usam a distribuição dos shots."
+        ),
+    )
+    parser.add_argument(
+        "--bias-layer",
+        choices=tuple(layer.value for layer in BiasLayer),
+        default=BiasLayer.NONE.value,
+        help=(
+            "camada 1Q fixa (H T^k H) baseada no pai: 'pre', 'post', 'both' "
+            "ou 'none'."
+        ),
+    )
+    parser.add_argument(
         "--original-mutation",
         type=float,
         default=None,
@@ -1118,6 +1157,8 @@ def main(argv: list[str] | None = None) -> int:
         f"  {stylePrint('• protocolo', C)}: p_a={protocol.p_a} · "
         f"p_s={protocol.p_s} · p_mut={protocol.mutation_rate} · "
         f"adaptive_mut={args.adaptive_mutation} · "
+        f"selection={args.selection_metric} · "
+        f"bias={args.bias_layer} · "
         f"p_mut_original={protocol.original_mutation} · "
         f"T={args.generations} · shots={shots} · "
         f"initial_h={initial_h} · fixed_h={fixed_h}"
@@ -1164,6 +1205,8 @@ def main(argv: list[str] | None = None) -> int:
         initial_h=initial_h,
         fixed_h=fixed_h,
         adaptive_mutation=args.adaptive_mutation,
+        selection_metric=args.selection_metric,
+        bias_layer=args.bias_layer,
         seed=args.seed,
         protocol=protocol,
         references=references,

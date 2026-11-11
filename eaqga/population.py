@@ -82,16 +82,26 @@ def _as_population(population: Sequence[HybridIndividual]) -> tuple[HybridIndivi
 def rank_population(
     population: Sequence[HybridIndividual],
 ) -> tuple[HybridIndividual, ...]:
-    """Ordena por fitness decrescente.
+    """Ordena por ``selection_score`` decrescente.
 
-    Empate é resolvido por ``bits`` lexicograficamente crescente. O tie-break
-    precisa ser determinístico: com ``k = 50`` shots, dois indivíduos diferentes
+    O critério principal é ``selection_score`` (best, mean ou median dos
+    shots); ``fitness`` é o desempate e ``bits`` fecha o tie-break. Ele precisa
+    ser determinístico: com ``k = 50`` shots, dois indivíduos diferentes
     empatam com frequência, e um pai sorteado de forma instável tornaria o
     experimento irreprodutível.
     """
 
     items = _as_population(population)
-    return tuple(sorted(items, key=lambda individual: (-individual.fitness, individual.bits)))
+    return tuple(
+        sorted(
+            items,
+            key=lambda individual: (
+                -individual.selection_score,
+                -individual.fitness,
+                individual.bits,
+            ),
+        )
+    )
 
 
 def top_two(

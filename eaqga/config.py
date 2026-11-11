@@ -22,10 +22,12 @@ from typing import Any
 __all__ = [
     "BackendKind",
     "BaselineConfig",
+    "BiasLayer",
     "EvaluationMode",
     "ForestShape",
     "GateSet",
     "HybridConfig",
+    "SelectionMetric",
 ]
 
 
@@ -47,6 +49,33 @@ class ForestShape(str, Enum):
 
     BOUNDED = "bounded"
     """Floresta com grau máximo configurável."""
+
+
+class BiasLayer(str, Enum):
+    """Camada 1Q fixa que empurra a marginal para os bits do pai.
+
+    A sequência é ``H T^3 H`` para bit 1 (P(1)≈0.854) e ``H T H`` para bit 0
+    (P(1)≈0.146), aplicada sem mutação. ``PRE`` age antes do genoma; ``POST``
+    depois dos CNOTs; ``BOTH`` nos dois lugares.
+    """
+
+    NONE = "none"
+    PRE = "pre"
+    POST = "post"
+    BOTH = "both"
+
+
+class SelectionMetric(str, Enum):
+    """Critério de ranqueamento dos indivíduos do híbrido.
+
+    ``BEST`` usa o melhor shot; ``MEAN`` e ``MEDIAN`` usam a distribuição de
+    fitness dos ``k`` shots. O fitness reportado continua sendo o do melhor
+    bitstring observado.
+    """
+
+    BEST = "best"
+    MEAN = "mean"
+    MEDIAN = "median"
 
 
 class BackendKind(str, Enum):
@@ -170,6 +199,8 @@ class HybridConfig:
     max_degree: int | None = 2
     mutation_rate: float = 0.05
     adaptive_mutation: bool = False
+    selection_metric: SelectionMetric = SelectionMetric.BEST
+    bias_layer: BiasLayer = BiasLayer.NONE
     p_s: float = 0.6
     initial_h: bool = True
     fixed_h: bool = True
@@ -200,6 +231,8 @@ class HybridConfig:
         _require_bool("fixed_h", self.fixed_h)
         _require_probability("mutation_rate", self.mutation_rate)
         _require_bool("adaptive_mutation", self.adaptive_mutation)
+        _require_enum("selection_metric", self.selection_metric, SelectionMetric)
+        _require_enum("bias_layer", self.bias_layer, BiasLayer)
         _require_probability("p_s", self.p_s)
         _require_forest_shape(self.forest_shape, self.max_degree)
 
@@ -245,6 +278,8 @@ class HybridConfig:
             "forest_shape": ForestShape,
             "backend": BackendKind,
             "evaluation_mode": EvaluationMode,
+            "selection_metric": SelectionMetric,
+            "bias_layer": BiasLayer,
         }
         for key, enum_type in enum_fields.items():
             if key in payload and not isinstance(payload[key], enum_type):

@@ -46,6 +46,8 @@ class Evaluation:
         lexicograficamente.
     mean:
         Média ponderada do fitness pelos shots.
+    median:
+        Mediana ponderada do fitness pelos shots.
     std:
         Desvio padrão amostral do fitness (``n - 1`` no denominador).
     best_bitstring:
@@ -66,6 +68,7 @@ class Evaluation:
     fitness_by_state: dict[str, float]
     bitstrings: tuple[str, ...]
     mean: float
+    median: float
     std: float
     best_bitstring: str
     best_fitness: float
@@ -154,10 +157,13 @@ class Evaluation:
 
         if (
             not math.isfinite(self.mean)
+            or not math.isfinite(self.median)
             or not math.isfinite(self.std)
             or not math.isfinite(self.best_fitness)
         ):
-            raise ValueError("mean, std e best_fitness devem ser finitos.")
+            raise ValueError(
+                "mean, median, std e best_fitness devem ser finitos."
+            )
         if self.std < 0.0:
             raise ValueError(f"std deve ser >= 0, recebeu {self.std}.")
         if not math.isclose(
@@ -195,6 +201,7 @@ class Evaluation:
             "S": self.S,
             "shots": self.shots,
             "mean": self.mean,
+            "median": self.median,
             "std": self.std,
             "best_bitstring": self.best_bitstring,
             "best_fitness": self.best_fitness,
@@ -215,9 +222,38 @@ class Evaluation:
     def __repr__(self) -> str:
         return (
             f"Evaluation(S={self.S}, shots={self.shots}, "
-            f"mean={self.mean:.6g}, best={self.best_bitstring!r}, "
+            f"mean={self.mean:.6g}, median={self.median:.6g}, "
+            f"best={self.best_bitstring!r}, "
             f"best_fitness={self.best_fitness:.6g})"
         )
+
+
+def _weighted_median(
+    counts: Mapping[str, int],
+    fitness_by_state: Mapping[str, float],
+    total: int,
+) -> float:
+    """Mediana ponderada dos fitness dos shots."""
+
+    ordered = sorted(
+        fitness_by_state,
+        key=lambda bits: fitness_by_state[bits],
+    )
+
+    def value_at(rank: int) -> float:
+        cumulative = 0
+        for bits in ordered:
+            cumulative += counts[bits]
+            if cumulative >= rank:
+                return float(fitness_by_state[bits])
+        return float(fitness_by_state[ordered[-1]])
+
+    if total % 2 == 1:
+        return value_at(total // 2 + 1)
+
+    lower = value_at(total // 2)
+    upper = value_at(total // 2 + 1)
+    return (lower + upper) / 2.0
 
 
 def evaluate_counts(
@@ -336,6 +372,7 @@ def evaluate_counts(
         )
         / total
     )
+    median = _weighted_median(canonical, fitness_by_state, total)
 
     if total > 1:
         variance = (
@@ -369,6 +406,7 @@ def evaluate_counts(
         fitness_by_state=fitness_by_state,
         bitstrings=bitstrings,
         mean=float(mean),
+        median=float(median),
         std=float(std),
         best_bitstring=best_bitstring,
         best_fitness=float(fitness_by_state[best_bitstring]),

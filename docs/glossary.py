@@ -116,6 +116,14 @@ ENDPOINTS: tuple[Endpoint, ...] = (
                 "--adaptive-mutation",
                 "p_mut do FbQGA: sobe quando o std do fitness cai (teto 2× a base).",
             ),
+            Flag(
+                "--selection-metric {best,mean,median}",
+                "critério de ranqueamento do híbrido (default: best).",
+            ),
+            Flag(
+                "--bias-layer {none,pre,post,both}",
+                "camada 1Q fixa de bias (H T^k H) baseada no pai (default: none).",
+            ),
             Flag("--original-mutation P", "p_mut do original (default do preset)."),
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
             Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),

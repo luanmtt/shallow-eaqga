@@ -41,7 +41,7 @@ from typing import Final
 from qiskit import QuantumCircuit
 from qiskit_aer import AerSimulator
 
-from .config import BackendKind, EvaluationMode, GateSet
+from .config import BackendKind, BiasLayer, EvaluationMode, GateSet, SelectionMetric
 from .crossover import CorrelationKind, Forest
 from .fitness import Evaluation, evaluate_counts
 from .instance import QUBOInstance
@@ -474,18 +474,32 @@ def _apply_gate(circuit: QuantumCircuit, gate: OneQGate, qubit: int) -> None:
         raise ValueError(f"porta não suportada: {gate!r}.")
 
 
+def _apply_bias_layer(circuit: QuantumCircuit, bits: str) -> None:
+    """Aplica ``H T^3 H`` (bit 1) ou ``H T H`` (bit 0) em cada qubit."""
+
+    for qubit, bit in enumerate(bits):
+        circuit.h(qubit)
+        for _ in range(3 if bit == "1" else 1):
+            circuit.t(qubit)
+        circuit.h(qubit)
+
+
 def build_hybrid_circuit(
     genome: Genome,
     forest: Forest | None = None,
     *,
     measure: bool = True,
     initial_h: bool = True,
+    bias_bits: str | None = None,
+    bias_layer: BiasLayer = BiasLayer.NONE,
 ) -> QuantumCircuit:
     """Monta ``H^S → genoma → CNOTs → medida`` para um indivíduo.
 
     ``forest=None`` (ou floresta vazia) monta só a parte 1Q; é o que a
     população inicial usa. ``initial_h=False`` remove a camada ``H^S`` fixa
     (ablação); nesse caso o genoma age diretamente sobre ``|0>^S``.
+    ``bias_layer`` insere uma camada fixa (não mutável) baseada em
+    ``bias_bits``: ``PRE`` antes do genoma, ``POST`` depois dos CNOTs.
     """
 
     if not isinstance(genome, Genome):
@@ -499,6 +513,23 @@ def build_hybrid_circuit(
             "initial_h deve ser bool, recebeu "
             f"{type(initial_h).__name__}."
         )
+    if not isinstance(bias_layer, BiasLayer):
+        raise TypeError(
+            "bias_layer deve ser BiasLayer, recebeu "
+            f"{type(bias_layer).__name__}."
+        )
+    if bias_bits is not None:
+        if not isinstance(bias_bits, str):
+            raise TypeError(
+                "bias_bits deve ser str ou None, recebeu "
+                f"{type(bias_bits).__name__}."
+            )
+        if len(bias_bits) != genome.size:
+            raise ValueError(
+                f"bias_bits deve ter {genome.size} bits, recebeu {len(bias_bits)}."
+            )
+        if set(bias_bits) - {"0", "1"}:
+            raise ValueError("bias_bits deve conter apenas '0' e '1'.")
 
     size = genome.size
     circuit = QuantumCircuit(size, size)
@@ -506,6 +537,9 @@ def build_hybrid_circuit(
     if initial_h:
         for qubit in range(size):
             circuit.h(qubit)
+
+    if bias_bits is not None and bias_layer in (BiasLayer.PRE, BiasLayer.BOTH):
+        _apply_bias_layer(circuit, bias_bits)
 
     for column in range(genome.num_columns):
         for qubit in range(size):
@@ -540,6 +574,9 @@ def build_hybrid_circuit(
                 circuit.x(edge.target)
             circuit.cx(edge.control, edge.target)
 
+    if bias_bits is not None and bias_layer in (BiasLayer.POST, BiasLayer.BOTH):
+        _apply_bias_layer(circuit, bias_bits)
+
     if measure:
         circuit.barrier()
         circuit.measure(range(size), range(size))
@@ -557,6 +594,8 @@ class HybridIndividual:
 
     ``bits``/``fitness`` são do **melhor shot** (``k = 50`` por padrão);
     ``evaluation`` guarda todos os counts, a média e o desvio.
+    ``selection_score`` é o critério configurável de ranqueamento (best, mean
+    ou median); ``fitness`` continua sendo o melhor shot para relatório.
     """
 
     genome: Genome
@@ -564,6 +603,7 @@ class HybridIndividual:
     fitness: float
     evaluation: Evaluation
     forest: Forest | None = None
+    selection_score: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.genome, Genome):
@@ -591,8 +631,21 @@ class HybridIndividual:
                 "forest deve ser Forest ou None, recebeu "
                 f"{type(self.forest).__name__}."
             )
+        if self.selection_score is not None and (
+            not isinstance(self.selection_score, (int, float))
+            or isinstance(self.selection_score, bool)
+        ):
+            raise TypeError(
+                "selection_score deve ser float ou None, recebeu "
+                f"{type(self.selection_score).__name__}."
+            )
 
         object.__setattr__(self, "fitness", float(self.fitness))
+        object.__setattr__(
+            self,
+            "selection_score",
+            float(self.fitness) if self.selection_score is None else float(self.selection_score),
+        )
 
     @property
     def bits_int(self) -> int:
@@ -625,6 +678,9 @@ def measure_genome(
     backend: BackendKind = BackendKind.STATEVECTOR,
     evaluation_mode: EvaluationMode = EvaluationMode.SCALAR,
     initial_h: bool = True,
+    selection_metric: SelectionMetric = SelectionMetric.BEST,
+    bias_bits: str | None = None,
+    bias_layer: BiasLayer = BiasLayer.NONE,
 ) -> HybridIndividual:
     """Mede o indivíduo ``shots`` vezes e devolve o melhor shot.
 
@@ -651,6 +707,8 @@ def measure_genome(
     seed_value = _require_int("seed", seed, minimum=0)
     _require_enum("backend", backend, BackendKind)
     _require_enum("evaluation_mode", evaluation_mode, EvaluationMode)
+    _require_enum("selection_metric", selection_metric, SelectionMetric)
+    _require_enum("bias_layer", bias_layer, BiasLayer)
     if not isinstance(initial_h, bool):
         raise TypeError(
             "initial_h deve ser bool, recebeu "
@@ -664,7 +722,13 @@ def measure_genome(
         )
 
     engine = simulator if simulator is not None else _make_simulator(backend)
-    circuit = build_hybrid_circuit(genome, forest, initial_h=initial_h)
+    circuit = build_hybrid_circuit(
+        genome,
+        forest,
+        initial_h=initial_h,
+        bias_bits=bias_bits,
+        bias_layer=bias_layer,
+    )
 
     result = engine.run(
         circuit,
@@ -679,10 +743,17 @@ def measure_genome(
         vectorized=evaluation_mode is EvaluationMode.VECTORIZED,
     )
 
+    selection_score = {
+        SelectionMetric.BEST: evaluation.best_fitness,
+        SelectionMetric.MEAN: evaluation.mean,
+        SelectionMetric.MEDIAN: evaluation.median,
+    }[selection_metric]
+
     return HybridIndividual(
         genome=genome,
         bits=evaluation.best_bitstring,
         fitness=evaluation.best_fitness,
         evaluation=evaluation,
         forest=forest,
+        selection_score=selection_score,
     )

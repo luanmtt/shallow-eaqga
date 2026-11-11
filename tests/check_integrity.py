@@ -29,9 +29,11 @@ import numpy as np
 
 from eaqga.config import (
     BaselineConfig,
+    BiasLayer,
     EvaluationMode,
     ForestShape,
     HybridConfig,
+    SelectionMetric,
 )
 from eaqga.crossover import (
     CorrelationKind,
@@ -94,6 +96,14 @@ def check_config_defaults() -> None:
     _check(
         hybrid.adaptive_mutation is False,
         "adaptive_mutation default deve ser False",
+    )
+    _check(
+        hybrid.selection_metric is SelectionMetric.BEST,
+        "selection_metric default deve ser BEST",
+    )
+    _check(
+        hybrid.bias_layer is BiasLayer.NONE,
+        "bias_layer default deve ser NONE",
     )
     _check(
         hybrid.evaluation_mode is EvaluationMode.SCALAR,
@@ -165,6 +175,11 @@ def check_config_guards() -> None:
         TypeError,
         lambda: HybridConfig(adaptive_mutation=cast(bool, 1)),
         "adaptive_mutation não bool",
+    )
+    _expect(
+        TypeError,
+        lambda: HybridConfig(bias_layer=cast(BiasLayer, "post")),
+        "bias_layer string",
     )
     _expect(
         TypeError,
@@ -273,6 +288,10 @@ def check_fitness_counts() -> None:
         f"best_bitstring={evaluation.best_bitstring!r} != '11'",
     )
     _check(
+        math.isclose(evaluation.median, 1.0, rel_tol=0.0, abs_tol=1e-12),
+        f"median={evaluation.median} != 1.0",
+    )
+    _check(
         evaluation.to_dict()["shots"] == 10,
         "Evaluation.to_dict não incluiu shots",
     )
@@ -318,6 +337,15 @@ def check_fitness_vectorized() -> None:
     _check(
         scalar_eval.best_bitstring == vector_eval.best_bitstring,
         "best_bitstring escalar e vetorizado divergiram",
+    )
+    _check(
+        math.isclose(
+            scalar_eval.median,
+            vector_eval.median,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ),
+        "median escalar e vetorizado divergiram",
     )
 
 

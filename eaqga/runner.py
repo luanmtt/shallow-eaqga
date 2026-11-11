@@ -135,6 +135,7 @@ def _initial_population(
             backend=config.backend,
             evaluation_mode=config.evaluation_mode,
             initial_h=config.initial_h,
+            selection_metric=config.selection_metric,
         )
         population.append(individual)
 
@@ -294,6 +295,9 @@ def run_hybrid(
                 backend=config.backend,
                 evaluation_mode=config.evaluation_mode,
                 initial_h=config.fixed_h,
+                selection_metric=config.selection_metric,
+                bias_bits=first.bits,
+                bias_layer=config.bias_layer,
             )
             circuit_index += 1
             evaluations += 1
@@ -430,6 +434,8 @@ def run_row(
         "gate_set": config.gate_set.value,
         "mutation_rate": config.mutation_rate,
         "adaptive_mutation": config.adaptive_mutation,
+        "selection_metric": config.selection_metric.value,
+        "bias_layer": config.bias_layer.value,
         "p_s": config.p_s,
         "initial_h": config.initial_h,
         "fixed_h": config.fixed_h,
