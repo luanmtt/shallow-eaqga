@@ -124,6 +124,13 @@ RUN_COLUMNS = (
     "evaluations",
     "final_unique",
     "elapsed_s",
+    "best_fitness_bits",
+    "best_fitness_internal",
+    "original_crossover_selection",
+    "original_selection",
+    "original_tournament",
+    "original_sigma_es",
+    "original_annealing",
 )
 
 
@@ -149,6 +156,13 @@ class RunRow(TypedDict):
     evaluations: int
     final_unique: int
     elapsed_s: float
+    best_fitness_bits: float
+    best_fitness_internal: float
+    original_crossover_selection: str
+    original_selection: str
+    original_tournament: int
+    original_sigma_es: bool
+    original_annealing: bool
 
 
 class SummaryRow(TypedDict):
@@ -161,6 +175,7 @@ class SummaryRow(TypedDict):
     runs: int
     fitness_mean: float
     fitness_std: float
+    reference: float
     gap_ref: float
     generation_mean: float
     elapsed_mean: float
@@ -216,6 +231,11 @@ class Protocol:
     original_elite: float
     original_crossover: float
     original_mutation: float
+    original_crossover_selection: str = "vertical"
+    original_selection: str = "tournament"
+    original_tournament: int = 3
+    original_sigma_es: bool = False
+    original_annealing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +271,11 @@ _PAPER_PROTOCOL = Protocol(
     original_elite=0.20,
     original_crossover=0.70,
     original_mutation=0.30,
+    original_crossover_selection="vertical",
+    original_selection="tournament",
+    original_tournament=3,
+    original_sigma_es=False,
+    original_annealing=False,
 )
 
 PRESETS: dict[str, Preset] = {
@@ -290,6 +315,7 @@ SUMMARY_COLUMNS = (
     "runs",
     "fitness_mean",
     "fitness_std",
+    "reference",
     "gap_ref",
     "generation_mean",
     "elapsed_mean",
@@ -345,6 +371,11 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
             elite_size=spec.protocol.original_elite,
             crossover_rate=spec.protocol.original_crossover,
             mutation_rate=spec.protocol.original_mutation,
+            selection_method=spec.protocol.original_selection,
+            tournament_size=spec.protocol.original_tournament,
+            crossover_selection=spec.protocol.original_crossover_selection,
+            sigma_es=spec.protocol.original_sigma_es,
+            annealing_window=spec.protocol.original_annealing,
         )
         elapsed = result.elapsed_s
     elif spec.algorithm == "baseline":
@@ -411,7 +442,22 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         "run": spec.run,
         "seed": spec.seed,
         "best_bits": result.best_bits,
-        "best_fitness": float(result.best_fitness),
+        "best_fitness": float(
+            result.best_fitness_bits
+            if spec.algorithm == "original"
+            else result.best_fitness
+        ),
+        "best_fitness_bits": float(
+            result.best_fitness_bits
+            if spec.algorithm == "original"
+            else result.best_fitness
+        ),
+        "best_fitness_internal": float(result.best_fitness),
+        "original_crossover_selection": spec.protocol.original_crossover_selection,
+        "original_selection": spec.protocol.original_selection,
+        "original_tournament": spec.protocol.original_tournament,
+        "original_sigma_es": spec.protocol.original_sigma_es,
+        "original_annealing": spec.protocol.original_annealing,
         "best_generation": int(result.best_generation),
         "evaluations": int(result.evaluations),
         "final_unique": len(
@@ -643,7 +689,7 @@ def _subset_stats(
             and row["algorithm"] == algorithm
         ):
             values.setdefault(row["subset"], []).append(
-                row["best_fitness"]
+                row["best_fitness_bits"]
             )
 
     return {
@@ -701,6 +747,7 @@ def _summary_rows(
                         runs=len(selected),
                         fitness_mean=average,
                         fitness_std=spread,
+                        reference=references.get(size, float("nan")),
                         gap_ref=references.get(size, float("nan")) - average,
                         generation_mean=statistics.fmean(
                             row["best_generation"] for row in selected

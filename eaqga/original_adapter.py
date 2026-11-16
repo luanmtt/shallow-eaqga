@@ -122,6 +122,7 @@ class OriginalMember:
 
     bits: str
     fitness: float
+    fitness_bits: float | None = None
     gate_counts: dict[str, int] | None = None
     circuit: QuantumCircuit | None = None
 
@@ -136,6 +137,14 @@ class OriginalMember:
             raise TypeError(
                 "fitness deve ser numérico, recebeu "
                 f"{type(self.fitness).__name__}."
+            )
+        if self.fitness_bits is not None and (
+            isinstance(self.fitness_bits, bool)
+            or not isinstance(self.fitness_bits, (int, float))
+        ):
+            raise TypeError(
+                "fitness_bits deve ser numérico ou None, recebeu "
+                f"{type(self.fitness_bits).__name__}."
             )
         if self.gate_counts is not None:
             if not isinstance(self.gate_counts, dict):
@@ -189,7 +198,16 @@ class OriginalResult:
 
     @property
     def best_fitness(self) -> float:
+        """Fitness interno do original (f(𝔼[x]))."""
+
         return self.best_individual.fitness
+
+    @property
+    def best_fitness_bits(self) -> float:
+        """Fitness QUBO do bitstring thresholded (comparável ao baseline/ours)."""
+
+        value = self.best_individual.fitness_bits
+        return float(self.best_individual.fitness) if value is None else float(value)
 
 
 def _bits_from_location(location: list[float] | None, size: int) -> str:
@@ -250,7 +268,11 @@ def run_original(
     elite_size: float = 0.2,
     crossover_rate: float = 0.7,
     mutation_rate: float = 0.3,
+    selection_method: str = "tournament",
     tournament_size: int = 3,
+    crossover_selection: str = "vertical",
+    sigma_es: bool = False,
+    annealing_window: bool = False,
 ) -> OriginalResult:
     """Roda o QGA original no QUBO e devolve o melhor bitstring.
 
@@ -284,6 +306,18 @@ def run_original(
         tournament_size = max(1, population_size)
     if shots is not None and (isinstance(shots, bool) or shots < 1):
         raise ValueError("shots deve ser int >= 1 ou None.")
+    if selection_method not in ("tournament", "roulette"):
+        raise ValueError(
+            f"selection_method inválido: {selection_method!r}."
+        )
+    if crossover_selection not in ("vertical", "horizontal", "mixed", "paper"):
+        raise ValueError(
+            f"crossover_selection inválido: {crossover_selection!r}."
+        )
+    if not isinstance(sigma_es, bool):
+        raise TypeError("sigma_es deve ser bool.")
+    if not isinstance(annealing_window, bool):
+        raise TypeError("annealing_window deve ser bool.")
 
     engine_module, individuo_module = load_engine()
 
@@ -352,11 +386,13 @@ def run_original(
         population_size=population_size,
         generations=generations,
         elite_size=elite_size,
-        selection_method="tournament",
+        selection_method=selection_method,
         tournament_size=tournament_size,
-        crossover_selection="vertical",
+        crossover_selection=crossover_selection,
         crossover_rate=crossover_rate,
         mutation_rate=mutation_rate,
+        annealing_window=annealing_window,
+        sigma_es=sigma_es,
         n_jobs=1,
         seed=seed,
         verbose=False,
@@ -426,18 +462,24 @@ def run_original(
         len(best_history) - 1,
     )
 
+    best_bits = _bits_from_location(best.location, size)
+    best_fitness_bits = instance.fitness(best_bits)
+
     final_population = tuple(
         OriginalMember(
-            bits=_bits_from_location(individual.location, size),
+            bits=bits,
             fitness=float(individual.fitness),
+            fitness_bits=instance.fitness(bits),
         )
         for individual in raw["final_population"]
+        for bits in (_bits_from_location(individual.location, size),)
     )
 
     return OriginalResult(
         best_individual=OriginalMember(
-            bits=_bits_from_location(best.location, size),
+            bits=best_bits,
             fitness=best_value,
+            fitness_bits=best_fitness_bits,
             gate_counts=best_gate_counts,
             circuit=best_circuit,
         ),
