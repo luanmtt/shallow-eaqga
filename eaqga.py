@@ -131,6 +131,8 @@ RUN_COLUMNS = (
     "original_tournament",
     "original_sigma_es",
     "original_annealing",
+    "original_portas",
+    "original_door_type",
 )
 
 
@@ -163,6 +165,8 @@ class RunRow(TypedDict):
     original_tournament: int
     original_sigma_es: bool
     original_annealing: bool
+    original_portas: int
+    original_door_type: int
 
 
 class SummaryRow(TypedDict):
@@ -204,6 +208,7 @@ _QUICK_CONFLICTS = (
     "--adaptive-mutation",
     "--selection-metric",
     "--bias-layer",
+    "--original-door-type",
     "--original-mutation",
     "--universe",
     "--as-of",
@@ -458,6 +463,8 @@ def _run_one(spec: RunSpec) -> tuple[RunRow, list[dict[str, object]]]:
         "original_tournament": spec.protocol.original_tournament,
         "original_sigma_es": spec.protocol.original_sigma_es,
         "original_annealing": spec.protocol.original_annealing,
+        "original_portas": spec.protocol.original_portas,
+        "original_door_type": spec.protocol.original_door_type,
         "best_generation": int(result.best_generation),
         "evaluations": int(result.evaluations),
         "final_unique": len(
@@ -988,6 +995,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="p_mut do original (default do preset).",
     )
     parser.add_argument(
+        "--original-door-type",
+        type=int,
+        choices=(-1, 0, 1, 2, 3),
+        default=None,
+        help=(
+            "conjunto de portas do original: -1 pure, 0 classical, "
+            "1 clifford, 2 hilbert (default do preset), 3 1Q-only."
+        ),
+    )
+    parser.add_argument(
         "--universe",
         choices=("sp500", "b3", "default"),
         default=None,
@@ -1101,6 +1118,11 @@ def main(argv: list[str] | None = None) -> int:
             protocol,
             original_mutation=args.original_mutation,
         )
+    if args.original_door_type is not None:
+        protocol = replace(
+            protocol,
+            original_door_type=args.original_door_type,
+        )
 
     if args.quick:
         # Perfil fixo: nada aqui depende de flags de experimento.
@@ -1207,6 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
         f"selection={args.selection_metric} · "
         f"bias={args.bias_layer} · "
         f"p_mut_original={protocol.original_mutation} · "
+        f"original_door={protocol.original_door_type} · "
         f"T={args.generations} · shots={shots} · "
         f"initial_h={initial_h} · fixed_h={fixed_h}"
     )

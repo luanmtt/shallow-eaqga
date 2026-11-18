@@ -125,6 +125,10 @@ ENDPOINTS: tuple[Endpoint, ...] = (
                 "camada 1Q fixa de bias (H T^k H) baseada no pai (default: none).",
             ),
             Flag("--original-mutation P", "p_mut do original (default do preset)."),
+            Flag(
+                "--original-door-type {0,1,2,3,-1}",
+                "conjunto de portas do original (2 = Hilbert).",
+            ),
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
             Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),
             Flag("--jobs N", "workers do joblib (default: min(8, cpus))."),
