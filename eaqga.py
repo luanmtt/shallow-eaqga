@@ -54,11 +54,18 @@ import argparse
 import csv
 import math
 import os
+import pickle
 import random
+import signal
 import statistics
+import subprocess
 import sys
+import tempfile
 import time
+import uuid
 import warnings
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Iterator
@@ -678,6 +685,204 @@ def _run_all(
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
+# Watchdog por tarefa
+
+
+_WATCHDOG_TASK_ENV = "EAQGA_WATCHDOG_TASK"
+_WATCHDOG_RESULT_ENV = "EAQGA_WATCHDOG_RESULT"
+
+
+def _watchdog_worker() -> int:
+    """Modo interno: executa uma única ``RunSpec`` vinda de um pickle."""
+
+    task_path = os.environ.get(_WATCHDOG_TASK_ENV)
+    result_path = os.environ.get(_WATCHDOG_RESULT_ENV)
+    if not task_path or not result_path:
+        print("worker do watchdog sem task/result no ambiente", file=sys.stderr)
+        return 2
+
+    try:
+        with Path(task_path).open("rb") as handle:
+            task = pickle.load(handle)
+        row, history = _run_one(task)
+        with Path(result_path).open("wb") as handle:
+            pickle.dump((row, history), handle)
+    except Exception as exc:  # noqa: BLE001 - o supervisor agrega
+        print(f"worker falhou: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _watchdog_run_task(
+    task: RunSpec,
+    timeout: int,
+    directory: Path,
+) -> tuple[RunRow, list[dict[str, object]]]:
+    """Roda uma tarefa em subprocesso isolado, matando o grupo no timeout."""
+
+    token = uuid.uuid4().hex
+    task_path = directory / f"task-{token}.pkl"
+    result_path = directory / f"result-{token}.pkl"
+    with task_path.open("wb") as handle:
+        pickle.dump(task, handle)
+
+    env = os.environ.copy()
+    env[_WATCHDOG_TASK_ENV] = str(task_path)
+    env[_WATCHDOG_RESULT_ENV] = str(result_path)
+    process = subprocess.Popen(
+        [sys.executable, str(_ROOT / "eaqga.py")],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    try:
+        _, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        process.communicate()
+        raise TimeoutError(
+            f"timeout de {timeout}s (S={task.size}, N={task.population}, "
+            f"{task.algorithm}, subset={task.subset}, run={task.run})"
+        ) from None
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"worker retornou {process.returncode}: {stderr[-2000:]}"
+        )
+    if not result_path.exists():
+        raise RuntimeError("worker não gerou resultado.")
+    with result_path.open("rb") as handle:
+        row, history = pickle.load(handle)
+    return cast(RunRow, row), cast(list[dict[str, object]], history)
+
+
+def _run_all_watchdog(
+    tasks: list[RunSpec],
+    path: Path,
+    history_path: Path,
+    *,
+    jobs: int,
+    timeout: int,
+    retries: int,
+    timings: dict[str, float] | None = None,
+) -> list[RunRow]:
+    """Como ``_run_all``, mas com timeout e retry por tarefa.
+
+    Cada tarefa roda em um subprocesso próprio. Se estourar ``timeout``, o
+    grupo do processo é morto. Falhas são retentadas até ``retries`` tentativas;
+    depois disso, a tarefa é abandonada e listada em ``watchdog-failures-*.txt``.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows: list[RunRow] = []
+    failures: list[RunSpec] = []
+    started = time.perf_counter()
+    total = len(tasks)
+    completed = 0
+    stride = max(1, total // 20) if total else 1
+
+    pending: deque[tuple[RunSpec, int]] = deque((task, 1) for task in tasks)
+
+    with path.open("w", newline="", encoding="utf-8") as handle, (
+        history_path.open("w", newline="", encoding="utf-8")
+    ) as history_handle, tempfile.TemporaryDirectory(
+        prefix="eaqga-watchdog-"
+    ) as temp_dir:
+        fieldnames: list[str] = list(RUN_COLUMNS)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        history_writer = csv.DictWriter(
+            history_handle,
+            fieldnames=list(HISTORY_COLUMNS),
+        )
+        history_writer.writeheader()
+
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            active: dict[object, tuple[RunSpec, int]] = {}
+
+            while pending or active:
+                while pending and len(active) < jobs:
+                    task, attempt = pending.popleft()
+                    future = executor.submit(
+                        _watchdog_run_task,
+                        task,
+                        timeout,
+                        Path(temp_dir),
+                    )
+                    active[future] = (task, attempt)
+
+                done, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in done:
+                    task, attempt = active.pop(future)
+                    try:
+                        row, generations = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        if attempt < retries:
+                            print(
+                                f"  watchdog: tentativa {attempt}/{retries} "
+                                f"falhou ({task.algorithm}, S={task.size}, "
+                                f"N={task.population}, subset={task.subset}, "
+                                f"run={task.run}): {exc} — retentando",
+                                flush=True,
+                            )
+                            pending.append((task, attempt + 1))
+                        else:
+                            failures.append(task)
+                            print(
+                                f"  watchdog: ABANDONADO após {attempt} "
+                                f"tentativas ({task.algorithm}, S={task.size}, "
+                                f"N={task.population}, subset={task.subset}, "
+                                f"run={task.run}): {exc}",
+                                flush=True,
+                            )
+                        continue
+
+                    if completed == 0 and timings is not None:
+                        timings["primeiro"] = time.perf_counter() - started
+                    writer.writerow(row)
+                    history_writer.writerows(generations)
+                    handle.flush()
+                    history_handle.flush()
+                    rows.append(row)
+                    completed += 1
+
+                    if completed % stride and completed != total:
+                        continue
+                    elapsed = time.perf_counter() - started
+                    rate = completed / elapsed if elapsed else 0.0
+                    eta = ((total - completed) / rate if rate else 0.0) / 60
+                    print(
+                        f"  {completed}/{total} execuções · {rate:.2f}/s · "
+                        f"ETA {eta:.1f} min",
+                        flush=True,
+                    )
+
+    if failures:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        failure_path = path.parent / f"watchdog-failures-{stamp}.txt"
+        failure_path.write_text(
+            "\n".join(
+                f"S={task.size} N={task.population} {task.algorithm} "
+                f"subset={task.subset} run={task.run}"
+                for task in failures
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"  watchdog: {len(failures)} tarefas abandonadas → {failure_path}")
+
+    print()
+    if timings is not None:
+        timings["execucao"] = time.perf_counter() - started
+    return rows
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
 # Agregação
 
 
@@ -1016,6 +1221,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="data dos constituintes do S&P 500 (default do preset).",
     )
     parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument(
+        "--task-timeout",
+        type=int,
+        default=0,
+        help=(
+            "watchdog: segundos por tarefa; 0 desliga. Ao estourar, o "
+            "subprocesso é morto e a tarefa é retentada."
+        ),
+    )
+    parser.add_argument(
+        "--task-retries",
+        type=int,
+        default=3,
+        help="watchdog: número máximo de tentativas por tarefa (default: 3).",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--output",
@@ -1057,6 +1277,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if os.environ.get(_WATCHDOG_TASK_ENV):
+        return _watchdog_worker()
+
     raw_args = list(sys.argv[1:] if argv is None else argv)
     args = _parse_args(argv)
 
@@ -1141,6 +1364,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.jobs < 1 and args.jobs != -1:
         raise SystemExit("--jobs deve ser >= 1 ou -1.")
+    if args.task_timeout < 0:
+        raise SystemExit("--task-timeout deve ser >= 0.")
+    if args.task_retries < 1:
+        raise SystemExit("--task-retries deve ser >= 1.")
     if args.original_runs < 1:
         raise SystemExit("--original-runs deve ser >= 1.")
     if args.as_of is not None and args.universe != "sp500":
@@ -1300,14 +1527,35 @@ def main(argv: list[str] | None = None) -> int:
         )
     print()
 
-    rows = _run_all(
-        tasks,
-        output,
-        history_output,
-        jobs=args.jobs,
-        backend=args.backend,
-        timings=timings,
-    )
+    if args.task_timeout > 0:
+        watchdog_jobs = os.cpu_count() or 1 if args.jobs == -1 else args.jobs
+        if args.backend != "loky":
+            print(
+                f"  {stylePrint('• watchdog', C)}: subprocessos por tarefa; "
+                "--backend é ignorado."
+            )
+        print(
+            f"  {stylePrint('• watchdog', C)}: timeout={args.task_timeout}s · "
+            f"tentativas={args.task_retries} · jobs={watchdog_jobs}"
+        )
+        rows = _run_all_watchdog(
+            tasks,
+            output,
+            history_output,
+            jobs=watchdog_jobs,
+            timeout=args.task_timeout,
+            retries=args.task_retries,
+            timings=timings,
+        )
+    else:
+        rows = _run_all(
+            tasks,
+            output,
+            history_output,
+            jobs=args.jobs,
+            backend=args.backend,
+            timings=timings,
+        )
 
     summary = _summary_rows(rows, args.sizes, args.population, references)
     _print_table(summary, shots)

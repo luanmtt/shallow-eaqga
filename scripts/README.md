@@ -20,3 +20,19 @@ Exemplo para o E1-S40 noturno:
 ```
 
 Use `--poweroff` no lugar de `--no-poweroff` se quiser desligar ao terminar.
+
+## Watchdog nativo
+
+O watchdog de tarefas agora é uma feature do `eaqga.py`:
+
+```bash
+.venv/bin/python eaqga.py ... --task-timeout 900 --task-retries 3
+```
+
+Cada tarefa roda em subprocesso isolado; no timeout, o grupo é morto e a
+tarefa é retentada. Depois de `--task-retries` falhas, ela é abandonada e
+listada em `watchdog-failures-*.txt`. `--task-timeout 0` desliga.
+
+Os scripts `resume_with_watchdog.py`, `run_original_task.py` e
+`resume_s40_hilbert.py` são one-offs do S40 Hilbert; a feature geral é a flag
+acima.

@@ -132,6 +132,14 @@ ENDPOINTS: tuple[Endpoint, ...] = (
             Flag("--universe {sp500,b3,default}", "S&P 500, B3 draft ou 30 large caps."),
             Flag("--as-of DATE", "constituintes do S&P na data (paper: 2024-09-30)."),
             Flag("--jobs N", "workers do joblib (default: min(8, cpus))."),
+            Flag(
+                "--task-timeout S",
+                "watchdog: segundos por tarefa; 0 desliga (default: 0).",
+            ),
+            Flag(
+                "--task-retries N",
+                "watchdog: tentativas por tarefa antes de abandonar (default: 3).",
+            ),
             Flag("--backend {loky,threading}", "loky isola processos; threading é ~4× pior."),
             Flag("--progress / --no-progress", "barra por geração (auto: só com --jobs 1)."),
             Flag("--timings", "tempo de cada fase até o 1º resultado."),
